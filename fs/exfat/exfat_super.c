@@ -1873,6 +1873,7 @@ static void exfat_detach(struct inode *inode)
 /* doesn't deal with root inode */
 static int exfat_fill_inode(struct inode *inode, FILE_ID_T *fid)
 {
+	struct timespec ts;
 	struct exfat_sb_info *sbi = EXFAT_SB(inode->i_sb);
 	FS_INFO_T *p_fs = &(sbi->fs_info);
 	DIR_ENTRY_T info;
@@ -1924,9 +1925,12 @@ static int exfat_fill_inode(struct inode *inode, FILE_ID_T *fid)
 	inode->i_blocks = ((i_size_read(inode) + (p_fs->cluster_size - 1))
 					   & ~((loff_t)p_fs->cluster_size - 1)) >> 9;
 
-	exfat_time_fat2unix(sbi, &inode->i_mtime, &info.ModifyTimestamp);
-	exfat_time_fat2unix(sbi, &inode->i_ctime, &info.CreateTimestamp);
-	exfat_time_fat2unix(sbi, &inode->i_atime, &info.AccessTimestamp);
+	exfat_time_fat2unix(sbi, &ts, &info.ModifyTimestamp);
+	inode->i_mtime = timespec_to_timespec64(ts);
+	exfat_time_fat2unix(sbi, &ts, &info.CreateTimestamp);
+	inode->i_ctime = timespec_to_timespec64(ts);
+	exfat_time_fat2unix(sbi, &ts, &info.AccessTimestamp);
+	inode->i_atime = timespec_to_timespec64(ts);
 
 	return 0;
 }
@@ -1997,6 +2001,7 @@ static int exfat_write_inode(struct inode *inode, int wait)
 static int exfat_write_inode(struct inode *inode, struct writeback_control *wbc)
 #endif
 {
+	struct timespec ts;
 	struct super_block *sb = inode->i_sb;
 	struct exfat_sb_info *sbi = EXFAT_SB(sb);
 	DIR_ENTRY_T info;
@@ -2007,9 +2012,12 @@ static int exfat_write_inode(struct inode *inode, struct writeback_control *wbc)
 	info.Attr = exfat_make_attr(inode);
 	info.Size = i_size_read(inode);
 
-	exfat_time_unix2fat(sbi, &inode->i_mtime, &info.ModifyTimestamp);
-	exfat_time_unix2fat(sbi, &inode->i_ctime, &info.CreateTimestamp);
-	exfat_time_unix2fat(sbi, &inode->i_atime, &info.AccessTimestamp);
+	ts = timespec64_to_timespec(inode->i_mtime);
+	exfat_time_unix2fat(sbi, &ts, &info.ModifyTimestamp);
+	ts = timespec64_to_timespec(inode->i_ctime);
+	exfat_time_unix2fat(sbi, &ts, &info.CreateTimestamp);
+	ts = timespec64_to_timespec(inode->i_atime);
+	exfat_time_unix2fat(sbi, &ts, &info.AccessTimestamp);
 
 	FsWriteStat(inode, &info);
 
