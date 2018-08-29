@@ -293,7 +293,7 @@ static int klp_check_stack(struct task_struct *task, char *err_buf)
 #ifdef CONFIG_SCHED_MUQSS
 typedef unsigned long rq_flags_t;
 #else
-typedef struct rq_flags rq_flag_t;
+typedef struct rq_flags rq_flags_t;
 #endif
 
 /*
