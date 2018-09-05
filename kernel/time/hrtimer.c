@@ -2027,6 +2027,7 @@ int __sched schedule_hrtimeout(ktime_t *expires,
 }
 EXPORT_SYMBOL_GPL(schedule_hrtimeout);
 
+#ifdef CONFIG_SCHED_MUQSS
 /*
  * As per schedule_hrtimeout but taskes a millisecond value and returns how
  * many milliseconds are left.
@@ -2140,3 +2141,4 @@ long __sched schedule_msec_hrtimeout_uninterruptible(long timeout)
 	return schedule_msec_hrtimeout(timeout);
 }
 EXPORT_SYMBOL(schedule_msec_hrtimeout_uninterruptible);
+#endif /* CONFIG_SCHED_MUQSS */
