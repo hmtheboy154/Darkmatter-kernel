@@ -72,7 +72,7 @@ config ZEN_INTERACTIVE
 
 	  --- MuQSS CPU Scheduler --------------------------------
 
-	    Scheduling interval............:   6    ->   3    ms
+	    Scheduling interval............:   6    ->   4    ms
 	    ISO task max realtime use......:  70 %  ->  25 %
 	    Ondemand sampling down factor..:   1    ->   5
 
