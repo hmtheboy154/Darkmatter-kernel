@@ -977,8 +977,10 @@ int elevator_init_mq(struct request_queue *q)
 	struct elevator_type *e;
 	int err = 0;
 
+#ifndef CONFIG_ZEN_INTERACTIVE
 	if (q->nr_hw_queues != 1)
 		return 0;
+#endif
 
 	/*
 	 * q->sysfs_lock must be held to provide mutual exclusion between
