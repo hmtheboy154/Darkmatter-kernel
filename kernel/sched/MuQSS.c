@@ -1019,6 +1019,10 @@ static void resched_curr(struct rq *rq)
 #define CPUIDLE_THREAD_BUSY	(16)
 #define CPUIDLE_DIFF_NODE	(32)
 
+#ifdef CONFIG_SCHED_SMT
+DEFINE_STATIC_KEY_FALSE(sched_smt_present);
+#endif
+
 /*
  * The best idle CPU is chosen according to the CPUIDLE ranking above where the
  * lowest value would give the most suitable CPU to schedule p onto next. The
