@@ -498,10 +498,11 @@ struct bfq_data {
 	unsigned int num_groups_with_pending_reqs;
 
 	/*
-	 * Number of bfq_queues containing requests (including the
-	 * queue in service, even if it is idling).
+	 * Per-class (RT, BE, IDLE) number of bfq_queues containing
+	 * requests (including the queue in service, even if it is
+	 * idling).
 	 */
-	int busy_queues;
+	unsigned int busy_queues[3];
 	/* number of weight-raised busy @bfq_queues */
 	int wr_busy_queues;
 	/* number of queued requests */
@@ -537,6 +538,9 @@ struct bfq_data {
 
 	/* on-disk position of the last served request */
 	sector_t last_position;
+
+	/* position of the last served request for the in-service queue */
+	sector_t in_serv_last_pos;
 
 	/* time of last request completion (ns) */
 	u64 last_completion;
@@ -982,6 +986,12 @@ static unsigned int bfq_class_idx(struct bfq_entity *entity)
 
 	return bfqq ? bfqq->ioprio_class - 1 :
 		BFQ_DEFAULT_GRP_CLASS - 1;
+}
+
+static unsigned int bfq_tot_busy_queues(struct bfq_data *bfqd)
+{
+	return bfqd->busy_queues[0] + bfqd->busy_queues[1] +
+		bfqd->busy_queues[2];
 }
 
 static struct bfq_service_tree *
