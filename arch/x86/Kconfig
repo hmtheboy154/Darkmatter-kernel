@@ -1123,6 +1123,22 @@ config RQ_SMP
 	  rqshare=smp
 
 	  If unsure, say N.
+
+config RQ_ALL
+	bool "NUMA"
+	depends on SMP && SCHED_MUQSS
+	help
+	  With this option enabled, the CPU scheduler will have one runqueue
+	  regardless of the architecture configuration, including across NUMA
+	  nodes. This can substantially decrease throughput in NUMA
+	  configurations, but light NUMA designs will not be dramatically
+	  affected. This option should only be chosen if latency is the prime
+	  concern.
+
+	  This can still be enabled runtime with the boot parameter
+	  rqshare=all
+
+	  If unsure, say N.
 endchoice
 
 config SHARERQ
@@ -1131,6 +1147,7 @@ config SHARERQ
 	default 1 if RQ_SMT
 	default 2 if RQ_MC
 	default 3 if RQ_SMP
+	default 4 if RQ_ALL
 
 
 config UP_LATE_INIT
