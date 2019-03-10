@@ -111,7 +111,7 @@
 
 void print_scheduler_version(void)
 {
-	printk(KERN_INFO "MuQSS CPU scheduler v0.185 by Con Kolivas.\n");
+	printk(KERN_INFO "MuQSS CPU scheduler v0.190 by Con Kolivas.\n");
 }
 
 #define RQSHARE_NONE 0
@@ -525,6 +525,18 @@ static bool set_nr_if_polling(struct task_struct *p)
 #endif
 #endif
 
+/**
+ * wake_q_add() - queue a wakeup for 'later' waking.
+ * @head: the wake_q_head to add @task to
+ * @task: the task to queue for 'later' wakeup
+ *
+ * Queue a task for later wakeup, most likely by the wake_up_q() call in the
+ * same context, _HOWEVER_ this is not guaranteed, the wakeup can come
+ * instantly.
+ *
+ * This function must be used as-if it were wake_up_process(); IOW the task
+ * must be ready to be woken at this location.
+ */
 void wake_q_add(struct wake_q_head *head, struct task_struct *task)
 {
 	struct wake_q_node *node = &task->wake_q;
@@ -534,10 +546,11 @@ void wake_q_add(struct wake_q_head *head, struct task_struct *task)
 	 * its already queued (either by us or someone else) and will get the
 	 * wakeup due to that.
 	 *
-	 * This cmpxchg() executes a full barrier, which pairs with the full
-	 * barrier executed by the wakeup in wake_up_q().
+	 * In order to ensure that a pending wakeup will observe our pending
+	 * state, even in the failed case, an explicit smp_mb() must be used.
 	 */
-	if (cmpxchg(&node->next, NULL, WAKE_Q_TAIL))
+	smp_mb__before_atomic();
+	if (cmpxchg_relaxed(&node->next, NULL, WAKE_Q_TAIL))
 		return;
 
 	get_task_struct(task);
@@ -2841,7 +2854,7 @@ static unsigned long nr_uninterruptible(void)
  * preemption, thus the result might have a time-of-check-to-time-of-use
  * race.  The caller is responsible to use it correctly, for example:
  *
- * - from a non-preemptable section (of course)
+ * - from a non-preemptible section (of course)
  *
  * - from a thread that is bound to a single CPU
  *
@@ -3925,7 +3938,7 @@ static void __sched notrace __schedule(bool preempt)
 
 	switch_count = &prev->nivcsw;
 	if (!preempt && prev->state) {
-		if (unlikely(signal_pending_state(prev->state, prev))) {
+		if (signal_pending_state(prev->state, prev)) {
 			prev->state = TASK_RUNNING;
 		} else {
 			deactivate = true;
@@ -6542,7 +6555,7 @@ int sched_cpu_deactivate(unsigned int cpu)
 	 *
 	 * Do sync before park smpboot threads to take care the rcu boost case.
 	 */
-	synchronize_rcu_mult(call_rcu, call_rcu_sched);
+	synchronize_rcu();
 
 	if (!sched_smp_initialized)
 		return 0;
@@ -6851,9 +6864,16 @@ void __init sched_init_smp(void)
 
 			for_each_possible_cpu(test_cpu) {
 				/* Work from each CPU up instead of every rq
-				 * starting at CPU 0 */
-				other_cpu = test_cpu + cpu;
-				other_cpu %= num_possible_cpus();
+				 * starting at CPU 0. Orders are better matched
+				 * if the top half CPUs count down instead. */
+				if (cpu < num_possible_cpus() / 2)
+					other_cpu = cpu + test_cpu;
+				else
+					other_cpu = cpu - test_cpu;
+				if (other_cpu < 0)
+					other_cpu += num_possible_cpus();
+				else
+					other_cpu %= num_possible_cpus();
 				other_rq = cpu_rq(other_cpu);
 
 				if (rq->cpu_locality[other_cpu] == locality) {
@@ -7236,26 +7256,6 @@ void proc_sched_show_task(struct task_struct *p, struct pid_namespace *ns,
 
 void proc_sched_set_task(struct task_struct *p)
 {}
-#endif
-
-#ifdef CONFIG_SMP
-#define SCHED_LOAD_SHIFT	(10)
-#define SCHED_LOAD_SCALE	(1L << SCHED_LOAD_SHIFT)
-
-unsigned long default_scale_freq_power(struct sched_domain *sd, int cpu)
-{
-	return SCHED_LOAD_SCALE;
-}
-
-unsigned long default_scale_smt_power(struct sched_domain *sd, int cpu)
-{
-	unsigned long weight = cpumask_weight(sched_domain_span(sd));
-	unsigned long smt_gain = sd->smt_gain;
-
-	smt_gain /= weight;
-
-	return smt_gain;
-}
 #endif
 
 #ifdef CONFIG_CGROUP_SCHED
