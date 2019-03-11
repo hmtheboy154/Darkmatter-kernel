@@ -537,12 +537,19 @@ bfq_pos_tree_add_move(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 }
 
 /*
- * The following function returns true if every queue must receive the
- * same share of the throughput (this condition is used when deciding
- * whether idling may be disabled, see the comments in the function
- * bfq_better_to_idle()).
+ * The following function returns false either if every active queue
+ * must receive the same share of the throughput (symmetric scenario),
+ * or, as a special case, if bfqq must receive a share of the
+ * throughput lower than or equal to the share that every other active
+ * queue must receive.  If bfqq does sync I/O, then these are the only
+ * two cases where bfqq happens to be guaranteed its share of the
+ * throughput even if I/O dispatching is not plugged when bfqq remains
+ * temporarily empty (for more details, see the comments in the
+ * function bfq_better_to_idle()). For this reason, the return value
+ * of this function is used to check whether I/O-dispatch plugging can
+ * be avoided.
  *
- * Such a scenario occurs when:
+ * The above first case (symmetric scenario) occurs when:
  * 1) all active queues have the same weight,
  * 2) all active queues belong to the same I/O-priority class,
  * 3) all active groups at the same level in the groups tree have the same
@@ -562,34 +569,52 @@ bfq_pos_tree_add_move(struct bfq_data *bfqd, struct bfq_queue *bfqq)
  * support or the cgroups interface are not enabled, thus no state
  * needs to be maintained in this case.
  */
-static bool bfq_symmetric_scenario(struct bfq_data *bfqd)
+static bool bfq_asymmetric_scenario(struct bfq_data *bfqd,
+				   struct bfq_queue *bfqq)
 {
+	bool smallest_weight = bfqq &&
+		bfqq->weight_counter &&
+		bfqq->weight_counter ==
+		container_of(
+			rb_first_cached(&bfqd->queue_weights_tree),
+			struct bfq_weight_counter,
+			weights_node);
+
 	/*
 	 * For queue weights to differ, queue_weights_tree must contain
 	 * at least two nodes.
 	 */
-	bool varied_queue_weights = !RB_EMPTY_ROOT(&bfqd->queue_weights_tree) &&
-		(bfqd->queue_weights_tree.rb_node->rb_left ||
-		 bfqd->queue_weights_tree.rb_node->rb_right);
+	bool varied_queue_weights = !smallest_weight &&
+		!RB_EMPTY_ROOT(&bfqd->queue_weights_tree.rb_root) &&
+		(bfqd->queue_weights_tree.rb_root.rb_node->rb_left ||
+		 bfqd->queue_weights_tree.rb_root.rb_node->rb_right);
 
 	bool multiple_classes_busy =
 		(bfqd->busy_queues[0] && bfqd->busy_queues[1]) ||
 		(bfqd->busy_queues[0] && bfqd->busy_queues[2]) ||
 		(bfqd->busy_queues[1] && bfqd->busy_queues[2]);
 
-	bfq_log(bfqd, "varied_queue_weights %d mul_classes %d",
-		varied_queue_weights, multiple_classes_busy);
+	if (bfqq) {
+		bfq_log_bfqq(bfqd, bfqq, "smallest %d varied %d mul_classes %d",
+			     smallest_weight,
+			     !RB_EMPTY_ROOT(&bfqd->queue_weights_tree.rb_root) &&
+			     (bfqd->queue_weights_tree.rb_root.rb_node->rb_left ||
+			      bfqd->queue_weights_tree.rb_root.rb_node->rb_right),
+			     multiple_classes_busy);
+	} else
+		bfq_log(bfqd, "varied_queue_weights %d mul_classes %d",
+			varied_queue_weights, multiple_classes_busy);
 
 #ifdef BFQ_GROUP_IOSCHED_ENABLED
 	bfq_log(bfqd, "num_groups_with_pending_reqs %u",
 		bfqd->num_groups_with_pending_reqs);
 #endif
 
-	return !(varied_queue_weights || multiple_classes_busy
+	return varied_queue_weights || multiple_classes_busy
 #ifdef BFQ_GROUP_IOSCHED_ENABLED
 	       || bfqd->num_groups_with_pending_reqs > 0
 #endif
-		);
+		;
 }
 
 /*
@@ -607,10 +632,11 @@ static bool bfq_symmetric_scenario(struct bfq_data *bfqd)
  */
 static void bfq_weights_tree_add(struct bfq_data *bfqd,
 				 struct bfq_queue *bfqq,
-				 struct rb_root *root)
+				 struct rb_root_cached *root)
 {
 	struct bfq_entity *entity = &bfqq->entity;
-	struct rb_node **new = &(root->rb_node), *parent = NULL;
+	struct rb_node **new = &(root->rb_root.rb_node), *parent = NULL;
+	bool leftmost = true;
 
 	/*
 	 * Do not insert if the queue is already associated with a
@@ -639,8 +665,10 @@ static void bfq_weights_tree_add(struct bfq_data *bfqd,
 		}
 		if (entity->weight < __counter->weight)
 			new = &((*new)->rb_left);
-		else
+		else {
 			new = &((*new)->rb_right);
+			leftmost = false;
+		}
 	}
 
 	bfqq->weight_counter = kzalloc(sizeof(struct bfq_weight_counter),
@@ -649,7 +677,7 @@ static void bfq_weights_tree_add(struct bfq_data *bfqd,
 	/*
 	 * In the unlucky event of an allocation failure, we just
 	 * exit. This will cause the weight of queue to not be
-	 * considered in bfq_symmetric_scenario, which, in its turn,
+	 * considered in bfq_asymmetric_scenario, which, in its turn,
 	 * causes the scenario to be deemed wrongly symmetric in case
 	 * bfqq's weight would have been the only weight making the
 	 * scenario asymmetric.  On the bright side, no unbalance will
@@ -663,7 +691,8 @@ static void bfq_weights_tree_add(struct bfq_data *bfqd,
 
 	bfqq->weight_counter->weight = entity->weight;
 	rb_link_node(&bfqq->weight_counter->weights_node, parent, new);
-	rb_insert_color(&bfqq->weight_counter->weights_node, root);
+	rb_insert_color_cached(&bfqq->weight_counter->weights_node, root,
+			       leftmost);
 
 inc_counter:
 	bfqq->weight_counter->num_active++;
@@ -672,7 +701,7 @@ inc_counter:
 	bfq_log_bfqq(bfqq->bfqd, bfqq, "refs %d weight %d symmetric %d",
 				bfqq->ref,
 				entity->weight,
-				bfq_symmetric_scenario(bfqd));
+		     !bfq_asymmetric_scenario(bfqd, bfqq));
 }
 
 /*
@@ -683,7 +712,7 @@ inc_counter:
  */
 static void __bfq_weights_tree_remove(struct bfq_data *bfqd,
 				      struct bfq_queue *bfqq,
-				      struct rb_root *root)
+				      struct rb_root_cached *root)
 {
 	struct bfq_entity *entity = &bfqq->entity;
 
@@ -699,7 +728,7 @@ static void __bfq_weights_tree_remove(struct bfq_data *bfqd,
 	if (bfqq->weight_counter->num_active > 0)
 		goto reset_entity_pointer;
 
-	rb_erase(&bfqq->weight_counter->weights_node, root);
+	rb_erase_cached(&bfqq->weight_counter->weights_node, root);
 	kfree(bfqq->weight_counter);
 
 reset_entity_pointer:
@@ -708,7 +737,7 @@ reset_entity_pointer:
 		     "refs %d weight %d symmetric %d",
 		     bfqq->ref,
 		     entity->weight,
-		     bfq_symmetric_scenario(bfqd));
+		     !bfq_asymmetric_scenario(bfqd, bfqq));
 	bfq_put_queue(bfqq);
 }
 
@@ -837,7 +866,7 @@ static unsigned long bfq_serv_to_charge(struct request *rq,
 					struct bfq_queue *bfqq)
 {
 	if (bfq_bfqq_sync(bfqq) || bfqq->wr_coeff > 1 ||
-	    !bfq_symmetric_scenario(bfqq->bfqd))
+	    bfq_asymmetric_scenario(bfqq->bfqd, NULL))
 		return blk_rq_sectors(rq);
 
 	return blk_rq_sectors(rq) * bfq_async_charge_factor;
@@ -949,6 +978,7 @@ bfq_bfqq_resume_state(struct bfq_queue *bfqq, struct bfq_data *bfqd,
 	if (unlikely(busy))
 		old_wr_coeff = bfqq->wr_coeff;
 
+	bfqq->entity.new_weight = bic->saved_weight;
 	bfqq->wr_coeff = bic->saved_wr_coeff;
 	bfqq->wr_start_at_switch_to_srt = bic->saved_wr_start_at_switch_to_srt;
 	BFQ_BUG_ON(time_is_after_jiffies(bfqq->wr_start_at_switch_to_srt));
@@ -1016,8 +1046,18 @@ static void bfq_reset_burst_list(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 
 	hlist_for_each_entry_safe(item, n, &bfqd->burst_list, burst_list_node)
 		hlist_del_init(&item->burst_list_node);
-	hlist_add_head(&bfqq->burst_list_node, &bfqd->burst_list);
-	bfqd->burst_size = 1;
+
+	/*
+	 * Start the creation of a new burst list only if there is no
+	 * active queue. See comments on the conditional invocation of
+	 * bfq_handle_burst().
+	 */
+	if (bfq_tot_busy_queues(bfqd) == 0) {
+		hlist_add_head(&bfqq->burst_list_node, &bfqd->burst_list);
+		bfqd->burst_size = 1;
+	} else
+		bfqd->burst_size = 0;
+
 	bfqd->burst_parent_entity = bfqq->entity.parent;
 }
 
@@ -1081,7 +1121,8 @@ static void bfq_add_to_burst(struct bfq_data *bfqd, struct bfq_queue *bfqq)
  * many parallel threads/processes. Examples are systemd during boot,
  * or git grep. To help these processes get their job done as soon as
  * possible, it is usually better to not grant either weight-raising
- * or device idling to their queues.
+ * or device idling to their queues, unless these queues must be
+ * protected from the I/O flowing through other active queues.
  *
  * In this comment we describe, firstly, the reasons why this fact
  * holds, and, secondly, the next function, which implements the main
@@ -1093,7 +1134,10 @@ static void bfq_add_to_burst(struct bfq_data *bfqd, struct bfq_queue *bfqq)
  * cumulatively served, the sooner the target job of these queues gets
  * completed. As a consequence, weight-raising any of these queues,
  * which also implies idling the device for it, is almost always
- * counterproductive. In most cases it just lowers throughput.
+ * counterproductive, unless there are other active queues to isolate
+ * these new queues from. If there no other active queues, then
+ * weight-raising these new queues just lowers throughput in most
+ * cases.
  *
  * On the other hand, a burst of queue creations may be caused also by
  * the start of an application that does not consist of a lot of
@@ -1127,14 +1171,16 @@ static void bfq_add_to_burst(struct bfq_data *bfqd, struct bfq_queue *bfqq)
  * are very rare. They typically occur if some service happens to
  * start doing I/O exactly when the interactive task starts.
  *
- * Turning back to the next function, it implements all the steps
- * needed to detect the occurrence of a large burst and to properly
- * mark all the queues belonging to it (so that they can then be
- * treated in a different way). This goal is achieved by maintaining a
- * "burst list" that holds, temporarily, the queues that belong to the
- * burst in progress. The list is then used to mark these queues as
- * belonging to a large burst if the burst does become large. The main
- * steps are the following.
+ * Turning back to the next function, it is invoked only if there are
+ * no active queues (apart from active queues that would belong to the
+ * same, possible burst bfqq would belong to), and it implements all
+ * the steps needed to detect the occurrence of a large burst and to
+ * properly mark all the queues belonging to it (so that they can then
+ * be treated in a different way). This goal is achieved by
+ * maintaining a "burst list" that holds, temporarily, the queues that
+ * belong to the burst in progress. The list is then used to mark
+ * these queues as belonging to a large burst if the burst does become
+ * large. The main steps are the following.
  *
  * . when the very first queue is created, the queue is inserted into the
  *   list (as it could be the first queue in a possible burst)
@@ -2396,6 +2442,7 @@ static void bfq_bfqq_save_state(struct bfq_queue *bfqq)
 	if (!bic)
 		return;
 
+	bic->saved_weight = bfqq->entity.orig_weight;
 	bic->saved_has_short_ttime = bfq_bfqq_has_short_ttime(bfqq);
 	bic->saved_IO_bound = bfq_bfqq_IO_bound(bfqq);
 	bic->saved_in_large_burst = bfq_bfqq_in_large_burst(bfqq);
@@ -2511,6 +2558,17 @@ bfq_merge_bfqqs(struct bfq_data *bfqd, struct bfq_io_cq *bic,
 	 *   assignment causes no harm).
 	 */
 	new_bfqq->bic = NULL;
+	/*
+	 * If the queue is shared, the pid is the pid of one of the associated
+	 * processes. Which pid depends on the exact sequence of merge events
+	 * the queue underwent. So printing such a pid is useless and confusing
+	 * because it reports a random pid between those of the associated
+	 * processes.
+	 * We mark such a queue with a pid -1, and then print SHARED instead of
+	 * a pid in logging messages.
+	 */
+	new_bfqq->pid = -1;
+
 	bfqq->bic = NULL;
 	/* release process reference to bfqq */
 	bfq_put_queue(bfqq);
@@ -2711,8 +2769,10 @@ static void bfq_arm_slice_timer(struct bfq_data *bfqd)
 	 * queue).
 	 */
 	if (BFQQ_SEEKY(bfqq) && bfqq->wr_coeff == 1 &&
-	    bfq_symmetric_scenario(bfqd))
+	    !bfq_asymmetric_scenario(bfqd, bfqq))
 		sl = min_t(u32, sl, BFQ_MIN_TT);
+	else if (bfqq->wr_coeff > 1)
+		sl = max_t(u32, sl, 20ULL * NSEC_PER_MSEC);
 
 	bfqd->last_idling_start = ktime_get();
 	hrtimer_start(&bfqd->idle_slice_timer, ns_to_ktime(sl),
@@ -3764,8 +3824,9 @@ static bool idling_boosts_thr_without_issues(struct bfq_data *bfqd,
 }
 
 /*
- * There is a case where idling must be performed not for
- * throughput concerns, but to preserve service guarantees.
+ * There is a case where idling does not have to be performed for
+ * throughput concerns, but to preserve the throughput share of
+ * the process associated with bfqq.
  *
  * To introduce this case, we can note that allowing the drive
  * to enqueue more than one request at a time, and hence
@@ -3781,77 +3842,83 @@ static bool idling_boosts_thr_without_issues(struct bfq_data *bfqd,
  * concern about per-process throughput distribution, and
  * makes its decisions only on a per-request basis. Therefore,
  * the service distribution enforced by the drive's internal
- * scheduler is likely to coincide with the desired
- * device-throughput distribution only in a completely
- * symmetric scenario where:
- * (i)  each of these processes must get the same throughput as
- *      the others;
- * (ii) the I/O of each process has the same properties, in
- *      terms of locality (sequential or random), direction
- *      (reads or writes), request sizes, greediness
- *      (from I/O-bound to sporadic), and so on.
- * In fact, in such a scenario, the drive tends to treat
- * the requests of each of these processes in about the same
- * way as the requests of the others, and thus to provide
- * each of these processes with about the same throughput
- * (which is exactly the desired throughput distribution). In
- * contrast, in any asymmetric scenario, device idling is
- * certainly needed to guarantee that bfqq receives its
- * assigned fraction of the device throughput (see [1] for
- * details).
- * The problem is that idling may significantly reduce
- * throughput with certain combinations of types of I/O and
- * devices. An important example is sync random I/O, on flash
- * storage with command queueing. So, unless bfqq falls in the
- * above cases where idling also boosts throughput, it would
- * be important to check conditions (i) and (ii) accurately,
- * so as to avoid idling when not strictly needed for service
- * guarantees.
+ * scheduler is likely to coincide with the desired throughput
+ * distribution only in a completely symmetric, or favorably
+ * skewed scenario where:
+ * (i-a) each of these processes must get the same throughput as
+ *	 the others,
+ * (i-b) in case (i-a) does not hold, it holds that the process
+ *       associated with bfqq must receive a lower or equal
+ *	 throughput than any of the other processes;
+ * (ii)  the I/O of each process has the same properties, in
+ *       terms of locality (sequential or random), direction
+ *       (reads or writes), request sizes, greediness
+ *       (from I/O-bound to sporadic), and so on;
+
+ * In fact, in such a scenario, the drive tends to treat the requests
+ * of each process in about the same way as the requests of the
+ * others, and thus to provide each of these processes with about the
+ * same throughput.  This is exactly the desired throughput
+ * distribution if (i-a) holds, or, if (i-b) holds instead, this is an
+ * even more convenient distribution for (the process associated with)
+ * bfqq.
  *
- * Unfortunately, it is extremely difficult to thoroughly
- * check condition (ii). And, in case there are active groups,
- * it becomes very difficult to check condition (i) too. In
- * fact, if there are active groups, then, for condition (i)
- * to become false, it is enough that an active group contains
- * more active processes or sub-groups than some other active
- * group. More precisely, for condition (i) to hold because of
- * such a group, it is not even necessary that the group is
- * (still) active: it is sufficient that, even if the group
- * has become inactive, some of its descendant processes still
- * have some request already dispatched but still waiting for
- * completion. In fact, requests have still to be guaranteed
- * their share of the throughput even after being
- * dispatched. In this respect, it is easy to show that, if a
- * group frequently becomes inactive while still having
- * in-flight requests, and if, when this happens, the group is
- * not considered in the calculation of whether the scenario
- * is asymmetric, then the group may fail to be guaranteed its
- * fair share of the throughput (basically because idling may
- * not be performed for the descendant processes of the group,
- * but it had to be).  We address this issue with the
- * following bi-modal behavior, implemented in the function
- * bfq_symmetric_scenario().
+ * In contrast, in any asymmetric or unfavorable scenario, device
+ * idling (I/O-dispatch plugging) is certainly needed to guarantee
+ * that bfqq receives its assigned fraction of the device throughput
+ * (see [1] for details).
+ *
+ * The problem is that idling may significantly reduce throughput with
+ * certain combinations of types of I/O and devices. An important
+ * example is sync random I/O on flash storage with command
+ * queueing. So, unless bfqq falls in cases where idling also boosts
+ * throughput, it is important to check conditions (i-a), i(-b) and
+ * (ii) accurately, so as to avoid idling when not strictly needed for
+ * service guarantees.
+ *
+ * Unfortunately, it is extremely difficult to thoroughly check
+ * condition (ii). And, in case there are active groups, it becomes
+ * very difficult to check conditions (i-a) and (i-b) too.  In fact,
+ * if there are active groups, then, for conditions (i-a) or (i-b) to
+ * become false 'indirectly', it is enough that an active group
+ * contains more active processes or sub-groups than some other active
+ * group. More precisely, for conditions (i-a) or (i-b) to become
+ * false because of such a group, it is not even necessary that the
+ * group is (still) active: it is sufficient that, even if the group
+ * has become inactive, some of its descendant processes still have
+ * some request already dispatched but still waiting for
+ * completion. In fact, requests have still to be guaranteed their
+ * share of the throughput even after being dispatched. In this
+ * respect, it is easy to show that, if a group frequently becomes
+ * inactive while still having in-flight requests, and if, when this
+ * happens, the group is not considered in the calculation of whether
+ * the scenario is asymmetric, then the group may fail to be
+ * guaranteed its fair share of the throughput (basically because
+ * idling may not be performed for the descendant processes of the
+ * group, but it had to be).  We address this issue with the following
+ * bi-modal behavior, implemented in the function
+ * bfq_asymmetric_scenario().
  *
  * If there are groups with requests waiting for completion
  * (as commented above, some of these groups may even be
  * already inactive), then the scenario is tagged as
  * asymmetric, conservatively, without checking any of the
- * conditions (i) and (ii). So the device is idled for bfqq.
+ * conditions (i-a), (i-b) or (ii). So the device is idled for bfqq.
  * This behavior matches also the fact that groups are created
  * exactly if controlling I/O is a primary concern (to
  * preserve bandwidth and latency guarantees).
  *
- * On the opposite end, if there are no groups with requests
- * waiting for completion, then only condition (i) is actually
- * controlled, i.e., provided that condition (i) holds, idling
- * is not performed, regardless of whether condition (ii)
- * holds. In other words, only if condition (i) does not hold,
- * then idling is allowed, and the device tends to be
- * prevented from queueing many requests, possibly of several
- * processes. Since there are no groups with requests waiting
- * for completion, then, to control condition (i) it is enough
- * to check just whether all the queues with requests waiting
- * for completion also have the same weight.
+ * On the opposite end, if there are no groups with requests waiting
+ * for completion, then only conditions (i-a) and (i-b) are actually
+ * controlled, i.e., provided that conditions (i-a) or (i-b) holds,
+ * idling is not performed, regardless of whether condition (ii)
+ * holds.  In other words, only if conditions (i-a) and (i-b) do not
+ * hold, then idling is allowed, and the device tends to be prevented
+ * from queueing many requests, possibly of several processes. Since
+ * there are no groups with requests waiting for completion, then, to
+ * control conditions (i-a) and (i-b) it is enough to check just
+ * whether all the queues with requests waiting for completion also
+ * have the same weight.
  *
  * Not checking condition (ii) evidently exposes bfqq to the
  * risk of getting less throughput than its fair share.
@@ -3903,7 +3970,7 @@ static bool idling_boosts_thr_without_issues(struct bfq_data *bfqd,
  * compound condition that is checked below for deciding
  * whether the scenario is asymmetric. To explain this
  * compound condition, we need to add that the function
- * bfq_symmetric_scenario checks the weights of only
+ * bfq_asymmetric_scenario checks the weights of only
  * non-weight-raised queues, for efficiency reasons (see
  * comments on bfq_weights_tree_add()). Then the fact that
  * bfqq is weight-raised is checked explicitly here. More
@@ -3931,7 +3998,7 @@ static bool idling_needed_for_service_guarantees(struct bfq_data *bfqd,
 	bool asymmetric_scenario = (bfqq->wr_coeff > 1 &&
 				    bfqd->wr_busy_queues <
 				    bfq_tot_busy_queues(bfqd)) ||
-		!bfq_symmetric_scenario(bfqd);
+		bfq_asymmetric_scenario(bfqd, bfqq);
 
 	bfq_log_bfqq(bfqd, bfqq,
 		     "wr_coeff %d wr_busy %d busy %d asymmetric %d",
@@ -5348,7 +5415,29 @@ new_queue:
 		}
 	}
 
-	if (unlikely(bfq_bfqq_just_created(bfqq)))
+	/*
+	 * Consider bfqq as possibly belonging to a burst of newly
+	 * created queues only if:
+	 * 1) A burst is actually happening (bfqd->burst_size > 0)
+	 * or
+	 * 2) There is no other active queue. In fact, if, in
+	 *    contrast, there are active queues not belonging to the
+	 *    possible burst bfqq may belong to, then there is no gain
+	 *    in considering bfqq as belonging to a burst, and
+	 *    therefore in not weight-raising bfqq. See comments on
+	 *    bfq_handle_burst().
+	 *
+	 * This filtering also helps eliminating false positives,
+	 * occurring when bfqq does not belong to an actual large
+	 * burst, but some background task (e.g., a service) happens
+	 * to trigger the creation of new queues very close to when
+	 * bfqq and its possible companion queues are created. See
+	 * comments on bfq_handle_burst() for further details also on
+	 * this issue.
+	 */
+	if (unlikely(bfq_bfqq_just_created(bfqq) &&
+		     (bfqd->burst_size > 0 ||
+		      bfq_tot_busy_queues(bfqd) == 0)))
 		bfq_handle_burst(bfqd, bfqq);
 
 	spin_unlock_irqrestore(q->queue_lock, flags);
@@ -5569,7 +5658,7 @@ static int bfq_init_queue(struct request_queue *q, struct elevator_type *e)
 		     HRTIMER_MODE_REL);
 	bfqd->idle_slice_timer.function = bfq_idle_slice_timer;
 
-	bfqd->queue_weights_tree = RB_ROOT;
+	bfqd->queue_weights_tree = RB_ROOT_CACHED;
 	bfqd->num_groups_with_pending_reqs = 0;
 
 	INIT_WORK(&bfqd->unplug_work, bfq_kick_queue);
