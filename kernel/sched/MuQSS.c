@@ -227,6 +227,7 @@ int __weak arch_sd_sibling_asym_packing(void)
 {
        return 0*SD_ASYM_PACKING;
 }
+EXPORT_SYMBOL_GPL(sched_smt_present);
 #else
 struct rq *uprq;
 #endif /* CONFIG_SMP */
