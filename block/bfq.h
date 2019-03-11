@@ -762,7 +762,7 @@ BFQ_BFQQ_FNS(softrt_update);
 #undef BFQ_BFQQ_FNS
 
 /* Logging facilities. */
-void bfq_pid_to_str(int pid, char *str, int len)
+static inline void bfq_pid_to_str(int pid, char *str, int len)
 {
 	if (pid != -1)
 		snprintf(str, len, "%d", pid);
