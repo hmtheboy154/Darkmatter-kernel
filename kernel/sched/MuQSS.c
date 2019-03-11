@@ -227,7 +227,6 @@ int __weak arch_sd_sibling_asym_packing(void)
 {
        return 0*SD_ASYM_PACKING;
 }
-EXPORT_SYMBOL_GPL(sched_smt_present);
 #else
 struct rq *uprq;
 #endif /* CONFIG_SMP */
@@ -1022,6 +1021,7 @@ static void resched_curr(struct rq *rq)
 
 #ifdef CONFIG_SCHED_SMT
 DEFINE_STATIC_KEY_FALSE(sched_smt_present);
+EXPORT_SYMBOL_GPL(sched_smt_present);
 #endif
 
 /*
