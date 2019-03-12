@@ -233,10 +233,6 @@ int __weak arch_sd_sibling_asym_packing(void)
        return 0*SD_ASYM_PACKING;
 }
 
-#ifdef CONFIG_SCHED_SMT
-DEFINE_STATIC_KEY_FALSE(sched_smt_present);
-#endif
-
 #else
 struct rq *uprq;
 #endif /* CONFIG_SMP */
