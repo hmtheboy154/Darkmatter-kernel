@@ -3,20 +3,21 @@
 #define MUQSS_SCHED_H
 
 #include <linux/sched/clock.h>
-#include <linux/sched/wake_q.h>
-#include <linux/sched/signal.h>
-#include <linux/sched/mm.h>
 #include <linux/sched/cpufreq.h>
-#include <linux/sched/stat.h>
-#include <linux/sched/nohz.h>
+#include <linux/sched/cputime.h>
 #include <linux/sched/debug.h>
 #include <linux/sched/hotplug.h>
+#include <linux/sched/init.h>
+#include <linux/sched/isolation.h>
+#include <linux/sched/mm.h>
+#include <linux/sched/nohz.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/smt.h>
+#include <linux/sched/stat.h>
 #include <linux/sched/task.h>
 #include <linux/sched/task_stack.h>
 #include <linux/sched/topology.h>
-#include <linux/sched/cputime.h>
-#include <linux/sched/init.h>
-#include <linux/sched/isolation.h>
+#include <linux/sched/wake_q.h>
 
 #include <uapi/linux/sched/types.h>
 
@@ -59,10 +60,6 @@
 
 struct rq;
 
-#if defined(CONFIG_IRQ_TIME_ACCOUNTING) || defined(CONFIG_PARAVIRT_TIME_ACCOUNTING)
-#define HAVE_SCHED_AVG_IRQ
-#endif
-
 #ifdef CONFIG_SMP
 
 static inline bool sched_asym_prefer(int a, int b)
@@ -85,8 +82,12 @@ struct root_domain {
 	cpumask_var_t span;
 	cpumask_var_t online;
 
-	/* Indicate more than one runnable task for any CPU */
-	bool overload;
+	/*
+	 * Indicate pullable load on at least one CPU, e.g:
+	 * - More than one runnable task
+	 * - Running task is misfit
+	 */
+	int			overload;
 
 	/*
 	 * The bit corresponding to a CPU gets set here if such CPU has more
@@ -177,7 +178,7 @@ struct rq {
 
 	u64 load_update; /* When we last updated load */
 	unsigned long load_avg; /* Rolling load average */
-#ifdef HAVE_SCHED_AVG_IRQ
+#ifdef CONFIG_HAVE_SCHED_AVG_IRQ
 	u64 irq_load_update; /* When we last updated IRQ load */
 	unsigned long irq_load_avg; /* Rolling IRQ load average */
 #endif
@@ -274,6 +275,10 @@ struct rq {
 #endif
 };
 
+struct rq_flags {
+	unsigned long flags;
+};
+
 #ifdef CONFIG_SMP
 struct rq *cpu_rq(int cpu);
 #endif
@@ -306,6 +311,16 @@ static inline int task_running(struct rq *rq, struct task_struct *p)
 #endif
 }
 
+static inline int task_on_rq_queued(struct task_struct *p)
+{
+	return p->on_rq == TASK_ON_RQ_QUEUED;
+}
+
+static inline int task_on_rq_migrating(struct task_struct *p)
+{
+	return p->on_rq == TASK_ON_RQ_MIGRATING;
+}
+
 static inline void rq_lock(struct rq *rq)
 	__acquires(rq->lock)
 {
@@ -324,51 +339,51 @@ static inline void rq_lock_irq(struct rq *rq)
 	raw_spin_lock_irq(rq->lock);
 }
 
-static inline void rq_unlock_irq(struct rq *rq)
+static inline void rq_unlock_irq(struct rq *rq, struct rq_flags __always_unused *rf)
 	__releases(rq->lock)
 {
 	raw_spin_unlock_irq(rq->lock);
 }
 
-static inline void rq_lock_irqsave(struct rq *rq, unsigned long *flags)
+static inline void rq_lock_irqsave(struct rq *rq, struct rq_flags *rf)
 	__acquires(rq->lock)
 {
-	raw_spin_lock_irqsave(rq->lock, *flags);
+	raw_spin_lock_irqsave(rq->lock, rf->flags);
 }
 
-static inline void rq_unlock_irqrestore(struct rq *rq, unsigned long *flags)
+static inline void rq_unlock_irqrestore(struct rq *rq, struct rq_flags *rf)
 	__releases(rq->lock)
 {
-	raw_spin_unlock_irqrestore(rq->lock, *flags);
+	raw_spin_unlock_irqrestore(rq->lock, rf->flags);
 }
 
-static inline struct rq *task_rq_lock(struct task_struct *p, unsigned long *flags)
+static inline struct rq *task_rq_lock(struct task_struct *p, struct rq_flags *rf)
 	__acquires(p->pi_lock)
 	__acquires(rq->lock)
 {
 	struct rq *rq;
 
 	while (42) {
-		raw_spin_lock_irqsave(&p->pi_lock, *flags);
+		raw_spin_lock_irqsave(&p->pi_lock, rf->flags);
 		rq = task_rq(p);
 		raw_spin_lock(rq->lock);
 		if (likely(rq == task_rq(p)))
 			break;
 		raw_spin_unlock(rq->lock);
-		raw_spin_unlock_irqrestore(&p->pi_lock, *flags);
+		raw_spin_unlock_irqrestore(&p->pi_lock, rf->flags);
 	}
 	return rq;
 }
 
-static inline void task_rq_unlock(struct rq *rq, struct task_struct *p, unsigned long *flags)
+static inline void task_rq_unlock(struct rq *rq, struct task_struct *p, struct rq_flags *rf)
 	__releases(rq->lock)
 	__releases(p->pi_lock)
 {
 	rq_unlock(rq);
-	raw_spin_unlock_irqrestore(&p->pi_lock, *flags);
+	raw_spin_unlock_irqrestore(&p->pi_lock, rf->flags);
 }
 
-static inline struct rq *__task_rq_lock(struct task_struct *p)
+static inline struct rq *__task_rq_lock(struct task_struct *p, struct rq_flags __always_unused *rf)
 	__acquires(rq->lock)
 {
 	struct rq *rq;
@@ -385,9 +400,21 @@ static inline struct rq *__task_rq_lock(struct task_struct *p)
 	return rq;
 }
 
-static inline void __task_rq_unlock(struct rq *rq)
+static inline void __task_rq_unlock(struct rq *rq, struct rq_flags __always_unused *rf)
 {
 	rq_unlock(rq);
+}
+
+static inline struct rq *
+this_rq_lock_irq(struct rq_flags *rf)
+	__acquires(rq->lock)
+{
+	struct rq *rq;
+
+	local_irq_disable();
+	rq = this_rq();
+	rq_lock(rq);
+	return rq;
 }
 
 /*
@@ -409,9 +436,17 @@ static inline void __task_rq_unlock(struct rq *rq)
  *
  */
 
+#define DEQUEUE_SLEEP		0x01
 #define DEQUEUE_SAVE		0x02 /* matches ENQUEUE_RESTORE */
 
+#define ENQUEUE_WAKEUP		0x01
 #define ENQUEUE_RESTORE		0x02
+
+#ifdef CONFIG_SMP
+#define ENQUEUE_MIGRATED	0x40
+#else
+#define ENQUEUE_MIGRATED	0x00
+#endif
 
 static inline u64 __rq_clock_broken(struct rq *rq)
 {
@@ -520,10 +555,11 @@ struct sched_group_capacity {
 	 * CPU capacity of this group, SCHED_CAPACITY_SCALE being max capacity
 	 * for a single CPU.
 	 */
-	unsigned long capacity;
-	unsigned long min_capacity; /* Min per-CPU capacity in group */
-	unsigned long next_update;
-	int imbalance; /* XXX unrelated to capacity but shared group state */
+	unsigned long		capacity;
+	unsigned long		min_capacity;		/* Min per-CPU capacity in group */
+	unsigned long		max_capacity;		/* Max per-CPU capacity in group */
+	unsigned long		next_update;
+	int			imbalance;		/* XXX unrelated to capacity but shared group state */
 
 #ifdef CONFIG_SCHED_DEBUG
 	int id;
@@ -730,18 +766,15 @@ static inline u64 read_sum_exec_runtime(struct task_struct *t)
 	return tsk_seruntime(t);
 }
 #else
-struct rq *task_rq_lock(struct task_struct *p, unsigned long *flags);
-void task_rq_unlock(struct rq *rq, struct task_struct *p, unsigned long *flags);
-
 static inline u64 read_sum_exec_runtime(struct task_struct *t)
 {
-	unsigned long flags;
+	struct rq_flags rf;
 	u64 ns;
 	struct rq *rq;
 
-	rq = task_rq_lock(t, &flags);
+	rq = task_rq_lock(t, &rf);
 	ns = tsk_seruntime(t);
-	task_rq_unlock(rq, t, &flags);
+	task_rq_unlock(rq, t, &rf);
 
 	return ns;
 }
@@ -845,7 +878,7 @@ static inline unsigned long cpu_util_rt(struct rq *rq)
 	return ret;
 }
 
-#ifdef HAVE_SCHED_AVG_IRQ
+#ifdef CONFIG_HAVE_SCHED_AVG_IRQ
 static inline unsigned long cpu_util_irq(struct rq *rq)
 {
 	unsigned long ret = READ_ONCE(rq->irq_load_avg);
