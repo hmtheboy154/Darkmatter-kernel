@@ -81,7 +81,11 @@ static u64 zswap_duplicate_entry;
 #define ZSWAP_PARAM_UNSET ""
 
 /* Enable/disable zswap (disabled by default) */
+#ifdef CONFIG_ZEN_INTERACTIVE
+static bool zswap_enabled = true;
+#else
 static bool zswap_enabled;
+#endif
 static int zswap_enabled_param_set(const char *,
 				   const struct kernel_param *);
 static struct kernel_param_ops zswap_enabled_param_ops = {
