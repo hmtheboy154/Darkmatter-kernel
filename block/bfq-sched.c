@@ -1953,7 +1953,7 @@ static struct bfq_queue *bfq_get_next_queue(struct bfq_data *bfqd)
 }
 
 /* returns true if the in-service queue gets freed */
-bool __bfq_bfqd_reset_in_service(struct bfq_data *bfqd)
+static bool __bfq_bfqd_reset_in_service(struct bfq_data *bfqd)
 {
 	struct bfq_queue *in_serv_bfqq = bfqd->in_service_queue;
 	struct bfq_entity *in_serv_entity = &in_serv_bfqq->entity;

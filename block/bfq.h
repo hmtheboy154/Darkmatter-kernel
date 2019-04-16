@@ -811,13 +811,14 @@ static struct blkcg_gq *bfqg_to_blkg(struct bfq_group *bfqg);
 
 #else /* BFQ_GROUP_IOSCHED_ENABLED */
 
-#define bfq_log_bfqq(bfqd, bfqq, fmt, args...)				\
+#define bfq_log_bfqq(bfqd, bfqq, fmt, args...) do {	\
 	char pid_str[MAX_PID_STR_LENGTH];	\
 	bfq_pid_to_str((bfqq)->pid, pid_str, MAX_PID_STR_LENGTH);	\
 	pr_crit("%s bfq%s%c [%s] " fmt "\n",				\
 		checked_dev_name((bfqd)->queue->backing_dev_info->dev),	\
 		pid_str, bfq_bfqq_sync((bfqq)) ? 'S' : 'A',		\
-		__func__, ##args)
+		__func__, ##args);	\
+} while (0)
 #define bfq_log_bfqg(bfqd, bfqg, fmt, args...)		do {} while (0)
 
 #endif /* BFQ_GROUP_IOSCHED_ENABLED */
@@ -860,7 +861,7 @@ static struct blkcg_gq *bfqg_to_blkg(struct bfq_group *bfqg);
 			  __pbuf, __func__, ##args);			\
 } while (0)
 
-#define bfq_log_bfqg(bfqd, bfqg, fmt, args...)	do {			\
+#define bfq_log_bfqg(bfqd, bfqg, fmt, args...)	do {	\
 	char __pbuf[128];						\
 									\
 	blkg_path(bfqg_to_blkg(bfqg), __pbuf, sizeof(__pbuf));		\
@@ -870,12 +871,13 @@ static struct blkcg_gq *bfqg_to_blkg(struct bfq_group *bfqg);
 
 #else /* BFQ_GROUP_IOSCHED_ENABLED */
 
-#define bfq_log_bfqq(bfqd, bfqq, fmt, args...)	\
+#define bfq_log_bfqq(bfqd, bfqq, fmt, args...) do {	\
 	char pid_str[MAX_PID_STR_LENGTH];	\
 	bfq_pid_to_str((bfqq)->pid, pid_str, MAX_PID_STR_LENGTH);	\
 	blk_add_trace_msg((bfqd)->queue, "bfq%s%c [%s] " fmt, pid_str, \
 			bfq_bfqq_sync((bfqq)) ? 'S' : 'A',		\
-				__func__, ##args)
+				__func__, ##args);	\
+} while (0)
 #define bfq_log_bfqg(bfqd, bfqg, fmt, args...)		do {} while (0)
 
 #endif /* BFQ_GROUP_IOSCHED_ENABLED */
