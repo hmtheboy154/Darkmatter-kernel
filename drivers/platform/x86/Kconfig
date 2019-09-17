@@ -1243,6 +1243,13 @@ config DV11P_TABLET
 	depends on ACPI
 	---help---
 	  This driver provides power button support and docking events for the Dell Venue 11 Pro tablet.
+	  
+config SURFACE_3_POWER_OPREGION
+	tristate "Surface 3 battery platform operation region support"
+	depends on ACPI && I2C
+	help
+	  Select this option to enable support for ACPI operation
+	  region of the Surface 3 battery platform driver.
 
 config INTEL_PUNIT_IPC
 	tristate "Intel P-Unit IPC Driver"
