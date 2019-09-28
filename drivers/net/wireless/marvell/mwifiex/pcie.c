@@ -1751,7 +1751,6 @@ static int mwifiex_pcie_process_cmd_complete(struct mwifiex_adapter *adapter)
 
 	rx_len = get_unaligned_le16(skb->data);
 
-
 	if (rx_len == 0) {
 		mwifiex_dbg(adapter, ERROR,
 				    "0 byte cmdrsp\n");
