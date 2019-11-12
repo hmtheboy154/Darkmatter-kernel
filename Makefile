@@ -1,9 +1,15 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 4
 PATCHLEVEL = 19
+<<<<<<< HEAD
 SUBLEVEL = 83
 EXTRAVERSION = -zen
 NAME = Neo Mir
+=======
+SUBLEVEL = 84
+EXTRAVERSION =
+NAME = "People's Front"
+>>>>>>> 4.19/upstream-updates
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
