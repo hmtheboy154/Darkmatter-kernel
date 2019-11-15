@@ -26,6 +26,10 @@
 #include "internal.h"
 
 #ifdef CONFIG_COMPACTION
+static struct compaction_state compaction_states[MAX_NUMNODES];
+#endif
+
+#ifdef CONFIG_COMPACTION
 static inline void count_compact_event(enum vm_event_item item)
 {
 	count_vm_event(item);
@@ -1850,6 +1854,31 @@ static inline bool is_via_compact_memory(int order)
 	return order == -1;
 }
 
+static unsigned int extfrag_hpage_wmark(struct zone *zone, bool low)
+{
+	int node_id, wmark, wmark_low;
+
+	node_id = zone->zone_pgdat->node_id;
+	wmark_low = 100 - compaction_states[node_id].hpage_compaction_effort;
+	wmark = low ? wmark_low : min(wmark_low + 10, 100);
+
+	return extfrag_for_order(zone, HUGETLB_PAGE_ORDER) > wmark;
+}
+
+static bool node_hpage_should_compact(pg_data_t *pgdat)
+{
+	struct zone *zone;
+
+	for_each_populated_zone(zone) {
+		if (extfrag_hpage_wmark(zone, false) &&
+			compaction_suitable(zone, HUGETLB_PAGE_ORDER,
+				0, zone_idx(zone)) == COMPACT_CONTINUE) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static enum compact_result __compact_finished(struct compact_control *cc)
 {
 	unsigned int order;
@@ -1877,6 +1906,9 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 	}
 
 	if (is_via_compact_memory(cc->order))
+		return COMPACT_CONTINUE;
+
+	if (extfrag_hpage_wmark(cc->zone, true))
 		return COMPACT_CONTINUE;
 
 	/*
@@ -1969,15 +2001,6 @@ static enum compact_result __compaction_suitable(struct zone *zone, int order,
 	if (is_via_compact_memory(order))
 		return COMPACT_CONTINUE;
 
-	watermark = wmark_pages(zone, alloc_flags & ALLOC_WMARK_MASK);
-	/*
-	 * If watermarks for high-order allocation are already met, there
-	 * should be no need for compaction at all.
-	 */
-	if (zone_watermark_ok(zone, order, watermark, classzone_idx,
-								alloc_flags))
-		return COMPACT_SUCCESS;
-
 	/*
 	 * Watermarks for order-0 must be met for compaction to be able to
 	 * isolate free pages for migration targets. This means that the
@@ -2007,31 +2030,9 @@ enum compact_result compaction_suitable(struct zone *zone, int order,
 					int classzone_idx)
 {
 	enum compact_result ret;
-	int fragindex;
 
 	ret = __compaction_suitable(zone, order, alloc_flags, classzone_idx,
 				    zone_page_state(zone, NR_FREE_PAGES));
-	/*
-	 * fragmentation index determines if allocation failures are due to
-	 * low memory or external fragmentation
-	 *
-	 * index of -1000 would imply allocations might succeed depending on
-	 * watermarks, but we already failed the high-order watermark check
-	 * index towards 0 implies failure is due to lack of memory
-	 * index towards 1000 implies failure is due to fragmentation
-	 *
-	 * Only compact if a failure would be due to fragmentation. Also
-	 * ignore fragindex for non-costly orders where the alternative to
-	 * a successful reclaim/compaction is OOM. Fragindex and the
-	 * vm.extfrag_threshold sysctl is meant as a heuristic to prevent
-	 * excessive compaction for costly orders, but it should not be at the
-	 * expense of system stability.
-	 */
-	if (ret == COMPACT_CONTINUE && (order > PAGE_ALLOC_COSTLY_ORDER)) {
-		fragindex = fragmentation_index(zone, order);
-		if (fragindex >= 0 && fragindex <= sysctl_extfrag_threshold)
-			ret = COMPACT_NOT_SUITABLE_ZONE;
-	}
 
 	trace_mm_compaction_suitable(zone, order, ret);
 	if (ret == COMPACT_NOT_SUITABLE_ZONE)
@@ -2423,7 +2424,6 @@ static void compact_node(int nid)
 		.gfp_mask = GFP_KERNEL,
 	};
 
-
 	for (zoneid = 0; zoneid < MAX_NR_ZONES; zoneid++) {
 
 		zone = &pgdat->node_zones[zoneid];
@@ -2496,8 +2496,122 @@ void compaction_unregister_node(struct node *node)
 }
 #endif /* CONFIG_SYSFS && CONFIG_NUMA */
 
+#ifdef CONFIG_SYSFS
+
+#define COMPACTION_ATTR_RO(_name) \
+	static struct kobj_attribute _name##_attr = __ATTR_RO(_name)
+
+#define COMPACTION_ATTR(_name) \
+	static struct kobj_attribute _name##_attr = \
+		__ATTR(_name, 0644, _name##_show, _name##_store)
+
+static struct kobject *compaction_kobj;
+static struct kobject *compaction_kobjs[MAX_NUMNODES];
+
+static struct compaction_state *kobj_to_compaction_state(struct kobject *kobj)
+{
+	int node;
+
+	for_each_online_node(node) {
+		if (compaction_kobjs[node] == kobj)
+			return &compaction_states[node];
+	}
+
+	return NULL;
+}
+
+static ssize_t hpage_compaction_effort_store(struct kobject *kobj,
+		struct kobj_attribute *attr, const char *buf, size_t count)
+{
+	int err;
+	unsigned long input;
+	struct compaction_state *c = kobj_to_compaction_state(kobj);
+
+	err = kstrtoul(buf, 10, &input);
+	if (err)
+		return err;
+	if (input > 100)
+		return -EINVAL;
+
+	c->hpage_compaction_effort = input;
+	return count;
+}
+
+static ssize_t hpage_compaction_effort_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	struct compaction_state *c = kobj_to_compaction_state(kobj);
+
+	return sprintf(buf, "%u\n", c->hpage_compaction_effort);
+}
+
+COMPACTION_ATTR(hpage_compaction_effort);
+
+static struct attribute *compaction_attrs[] = {
+	&hpage_compaction_effort_attr.attr,
+	NULL,
+};
+
+static const struct attribute_group compaction_attr_group = {
+	.attrs = compaction_attrs,
+};
+
+static int compaction_sysfs_add_node(struct compaction_state *c,
+	struct kobject *parent, struct kobject **compaction_kobjs,
+	const struct attribute_group *compaction_attr_group)
+{
+	int retval;
+
+	compaction_kobjs[c->node_id] =
+			kobject_create_and_add(c->name, parent);
+	if (!compaction_kobjs[c->node_id])
+		return -ENOMEM;
+
+	retval = sysfs_create_group(compaction_kobjs[c->node_id],
+				compaction_attr_group);
+	if (retval)
+		kobject_put(compaction_kobjs[c->node_id]);
+
+	return retval;
+}
+
+static void __init compaction_sysfs_init(void)
+{
+	struct compaction_state *c;
+	int err, node;
+
+	compaction_kobj = kobject_create_and_add("compaction", mm_kobj);
+	if (!compaction_kobj)
+		return;
+
+	for_each_online_node(node) {
+		c = &compaction_states[node];
+		err = compaction_sysfs_add_node(c, compaction_kobj,
+					compaction_kobjs,
+					&compaction_attr_group);
+		if (err)
+			pr_err("compaction: Unable to add state %s", c->name);
+	}
+}
+
+static void __init compaction_init(void)
+{
+	int node;
+
+	for_each_online_node(node) {
+		struct compaction_state *c = &compaction_states[node];
+
+		c->node_id = node;
+		c->hpage_compaction_effort = 0;
+		snprintf(c->name, COMPACTION_STATE_NAME_LEN, "node-%d", node);
+	}
+}
+#endif
+
 static inline bool kcompactd_work_requested(pg_data_t *pgdat)
 {
+	if (node_hpage_should_compact(pgdat) && !pgdat->kcompactd_max_order)
+		pgdat->kcompactd_max_order = 1;
 	return pgdat->kcompactd_max_order > 0 || kthread_should_stop();
 }
 
@@ -2533,7 +2647,7 @@ static void kcompactd_do_work(pg_data_t *pgdat)
 		.order = pgdat->kcompactd_max_order,
 		.search_order = pgdat->kcompactd_max_order,
 		.classzone_idx = pgdat->kcompactd_classzone_idx,
-		.mode = MIGRATE_SYNC_LIGHT,
+		.mode = MIGRATE_SYNC,
 		.ignore_skip_hint = false,
 		.gfp_mask = GFP_KERNEL,
 	};
@@ -2560,7 +2674,6 @@ static void kcompactd_do_work(pg_data_t *pgdat)
 
 		cc.zone = zone;
 		status = compact_zone(&cc, NULL);
-
 		if (status == COMPACT_SUCCESS) {
 			compaction_defer_reset(zone, cc.order, false);
 		} else if (status == COMPACT_PARTIAL_SKIPPED || status == COMPACT_COMPLETE) {
@@ -2645,11 +2758,14 @@ static int kcompactd(void *p)
 	pgdat->kcompactd_classzone_idx = pgdat->nr_zones - 1;
 
 	while (!kthread_should_stop()) {
-		unsigned long pflags;
+		unsigned long ret, pflags;
 
 		trace_mm_compaction_kcompactd_sleep(pgdat->node_id);
-		wait_event_freezable(pgdat->kcompactd_wait,
-				kcompactd_work_requested(pgdat));
+		ret = wait_event_freezable_timeout(pgdat->kcompactd_wait,
+				kcompactd_work_requested(pgdat),
+				msecs_to_jiffies(500));
+		if (!ret)
+			continue;
 
 		psi_memstall_enter(&pflags);
 		kcompactd_do_work(pgdat);
@@ -2729,6 +2845,9 @@ static int __init kcompactd_init(void)
 		pr_err("kcompactd: failed to register hotplug callbacks.\n");
 		return ret;
 	}
+
+	compaction_init();
+	compaction_sysfs_init();
 
 	for_each_node_state(nid, N_MEMORY)
 		kcompactd_run(nid);
