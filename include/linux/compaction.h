@@ -60,6 +60,15 @@ enum compact_result {
 
 struct alloc_context; /* in mm/internal.h */
 
+// "node-%d"
+#define COMPACTION_STATE_NAME_LEN 16
+// Per-node compaction state
+struct compaction_state {
+	int node_id;
+	unsigned int hpage_compaction_effort;
+	char name[COMPACTION_STATE_NAME_LEN];
+};
+
 /*
  * Number of free order-0 pages that should be available above given watermark
  * to make sure compaction has reasonable chance of not running out of free
@@ -90,6 +99,7 @@ extern int sysctl_compaction_handler(struct ctl_table *table, int write,
 extern int sysctl_extfrag_threshold;
 extern int sysctl_compact_unevictable_allowed;
 
+extern int extfrag_for_order(struct zone *zone, unsigned int order);
 extern int fragmentation_index(struct zone *zone, unsigned int order);
 extern enum compact_result try_to_compact_pages(gfp_t gfp_mask,
 		unsigned int order, unsigned int alloc_flags,
