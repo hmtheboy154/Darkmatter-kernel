@@ -2,8 +2,8 @@
 VERSION = 5
 PATCHLEVEL = 4
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Kleptomaniac Octopus
+EXTRAVERSION = -zen
+NAME = Pudding River
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
