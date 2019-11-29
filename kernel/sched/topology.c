@@ -3,7 +3,9 @@
  * Scheduler topology setup/handling methods
  */
 #include "sched.h"
+#ifdef CONFIG_SCHED_MUQSS
 #include "linux/sched/deadline.h"
+#endif
 
 DEFINE_MUTEX(sched_domains_mutex);
 
