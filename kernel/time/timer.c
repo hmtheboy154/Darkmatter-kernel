@@ -43,7 +43,9 @@
 #include <linux/sched/debug.h>
 #include <linux/slab.h>
 #include <linux/compat.h>
+#ifdef CONFIG_SCHED_MUQSS
 #include <linux/freezer.h>
+#endif
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
