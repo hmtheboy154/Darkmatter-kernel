@@ -20,8 +20,13 @@ typedef void (bio_end_io_t) (struct bio *);
 
 /*
  * Block error status values.  See block/blk-core:blk_errors for the details.
+ * Alpha cannot write a byte atomically, so we need to use 32-bit value.
  */
+#if defined(CONFIG_ALPHA) && !defined(__alpha_bwx__)
+typedef u32 __bitwise blk_status_t;
+#else
 typedef u8 __bitwise blk_status_t;
+#endif
 #define	BLK_STS_OK 0
 #define BLK_STS_NOTSUPP		((__force blk_status_t)1)
 #define BLK_STS_TIMEOUT		((__force blk_status_t)2)
@@ -128,12 +133,13 @@ struct bio {
 #define BIO_BOUNCED	3	/* bio is a bounce bio */
 #define BIO_USER_MAPPED 4	/* contains user pages */
 #define BIO_NULL_MAPPED 5	/* contains invalid user pages */
-#define BIO_QUIET	6	/* Make BIO Quiet */
-#define BIO_CHAIN	7	/* chained bio, ->bi_remaining in effect */
-#define BIO_REFFED	8	/* bio has elevated ->bi_cnt */
-#define BIO_THROTTLED	9	/* This bio has already been subjected to
+#define BIO_WORKINGSET	6	/* contains userspace workingset pages */
+#define BIO_QUIET	7	/* Make BIO Quiet */
+#define BIO_CHAIN	8	/* chained bio, ->bi_remaining in effect */
+#define BIO_REFFED	9	/* bio has elevated ->bi_cnt */
+#define BIO_THROTTLED	10	/* This bio has already been subjected to
 				 * throttling rules. Don't do it again. */
-#define BIO_TRACE_COMPLETION 10	/* bio_endio() should trace the final completion
+#define BIO_TRACE_COMPLETION 11	/* bio_endio() should trace the final completion
 				 * of this bio. */
 /* See BVEC_POOL_OFFSET below before adding new flags */
 

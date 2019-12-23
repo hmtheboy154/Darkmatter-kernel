@@ -687,10 +687,10 @@ flush_write_domain(struct drm_i915_gem_object *obj, unsigned int flush_domains)
 
 	switch (obj->base.write_domain) {
 	case I915_GEM_DOMAIN_GTT:
-		if (INTEL_GEN(dev_priv) >= 6 && !HAS_LLC(dev_priv)) {
+		if (!HAS_LLC(dev_priv)) {
 			intel_runtime_pm_get(dev_priv);
 			spin_lock_irq(&dev_priv->uncore.lock);
-			POSTING_READ_FW(RING_ACTHD(dev_priv->engine[RCS]->mmio_base));
+			POSTING_READ_FW(RING_HEAD(dev_priv->engine[RCS]->mmio_base));
 			spin_unlock_irq(&dev_priv->uncore.lock);
 			intel_runtime_pm_put(dev_priv);
 		}
@@ -980,11 +980,7 @@ i915_gem_shmem_pread(struct drm_i915_gem_object *obj,
 	offset = offset_in_page(args->offset);
 	for (idx = args->offset >> PAGE_SHIFT; remain; idx++) {
 		struct page *page = i915_gem_object_get_page(obj, idx);
-		int length;
-
-		length = remain;
-		if (offset + length > PAGE_SIZE)
-			length = PAGE_SIZE - offset;
+		unsigned int length = min_t(u64, remain, PAGE_SIZE - offset);
 
 		ret = shmem_pread(page, offset, length, user_data,
 				  page_to_phys(page) & obj_do_bit17_swizzling,
@@ -1406,11 +1402,7 @@ i915_gem_shmem_pwrite(struct drm_i915_gem_object *obj,
 	offset = offset_in_page(args->offset);
 	for (idx = args->offset >> PAGE_SHIFT; remain; idx++) {
 		struct page *page = i915_gem_object_get_page(obj, idx);
-		int length;
-
-		length = remain;
-		if (offset + length > PAGE_SIZE)
-			length = PAGE_SIZE - offset;
+		unsigned int length = min_t(u64, remain, PAGE_SIZE - offset);
 
 		ret = shmem_pwrite(page, offset, length, user_data,
 				   page_to_phys(page) & obj_do_bit17_swizzling,
@@ -1641,6 +1633,17 @@ i915_gem_sw_finish_ioctl(struct drm_device *dev, void *data,
 	return 0;
 }
 
+static inline bool
+__vma_matches(struct vm_area_struct *vma, struct file *filp,
+	      unsigned long addr, unsigned long size)
+{
+	if (vma->vm_file != filp)
+		return false;
+
+	return vma->vm_start == addr &&
+	       (vma->vm_end - vma->vm_start) == PAGE_ALIGN(size);
+}
+
 /**
  * i915_gem_mmap_ioctl - Maps the contents of an object, returning the address
  *			 it is mapped to.
@@ -1699,7 +1702,7 @@ i915_gem_mmap_ioctl(struct drm_device *dev, void *data,
 			return -EINTR;
 		}
 		vma = find_vma(mm, addr);
-		if (vma)
+		if (vma && __vma_matches(vma, obj->base.filp, addr, args->size))
 			vma->vm_page_prot =
 				pgprot_writecombine(vm_get_page_prot(vma->vm_flags));
 		else
@@ -1830,6 +1833,10 @@ int i915_gem_fault(struct vm_fault *vmf)
 	pgoff_t page_offset;
 	unsigned int flags;
 	int ret;
+
+	/* Sanity check that we allow writing into this object */
+	if (i915_gem_object_is_readonly(obj) && write)
+		return VM_FAULT_SIGBUS;
 
 	/* We don't use vmf->pgoff since that has the fake offset */
 	page_offset = (vmf->address - area->vm_start) >> PAGE_SHIFT;
@@ -3236,6 +3243,12 @@ i915_gem_idle_work_handler(struct work_struct *work)
 
 	if (INTEL_GEN(dev_priv) >= 6)
 		gen6_rps_idle(dev_priv);
+
+	if (NEEDS_RC6_CTX_CORRUPTION_WA(dev_priv)) {
+		i915_rc6_ctx_wa_check(dev_priv);
+		intel_uncore_forcewake_put(dev_priv, FORCEWAKE_ALL);
+	}
+
 	intel_runtime_pm_put(dev_priv);
 out_unlock:
 	mutex_unlock(&dev->struct_mutex);
@@ -3378,24 +3391,12 @@ static int wait_for_timeline(struct i915_gem_timeline *tl, unsigned int flags)
 	return 0;
 }
 
-static int wait_for_engine(struct intel_engine_cs *engine, int timeout_ms)
-{
-	return wait_for(intel_engine_is_idle(engine), timeout_ms);
-}
-
 static int wait_for_engines(struct drm_i915_private *i915)
 {
-	struct intel_engine_cs *engine;
-	enum intel_engine_id id;
-
-	for_each_engine(engine, i915, id) {
-		if (GEM_WARN_ON(wait_for_engine(engine, 50))) {
-			i915_gem_set_wedged(i915);
-			return -EIO;
-		}
-
-		GEM_BUG_ON(intel_engine_get_seqno(engine) !=
-			   intel_engine_last_submit(engine));
+	if (wait_for(intel_engines_are_idle(i915), 50)) {
+		DRM_ERROR("Failed to idle engines, declaring wedged!\n");
+		i915_gem_set_wedged(i915);
+		return -EIO;
 	}
 
 	return 0;
@@ -3620,7 +3621,8 @@ restart:
 			return -EBUSY;
 		}
 
-		if (i915_gem_valid_gtt_space(vma, cache_level))
+		if (!i915_vma_is_closed(vma) &&
+		    i915_gem_valid_gtt_space(vma, cache_level))
 			continue;
 
 		ret = i915_vma_unbind(vma);
@@ -4004,6 +4006,20 @@ i915_gem_object_ggtt_pin(struct drm_i915_gem_object *obj,
 {
 	struct drm_i915_private *dev_priv = to_i915(obj->base.dev);
 	struct i915_address_space *vm = &dev_priv->ggtt.base;
+
+	return i915_gem_object_pin(obj, vm, view, size, alignment,
+				   flags | PIN_GLOBAL);
+}
+
+struct i915_vma *
+i915_gem_object_pin(struct drm_i915_gem_object *obj,
+		    struct i915_address_space *vm,
+		    const struct i915_ggtt_view *view,
+		    u64 size,
+		    u64 alignment,
+		    u64 flags)
+{
+	struct drm_i915_private *dev_priv = to_i915(obj->base.dev);
 	struct i915_vma *vma;
 	int ret;
 
@@ -4061,7 +4077,7 @@ i915_gem_object_ggtt_pin(struct drm_i915_gem_object *obj,
 			return ERR_PTR(ret);
 	}
 
-	ret = i915_vma_pin(vma, size, alignment, flags | PIN_GLOBAL);
+	ret = i915_vma_pin(vma, size, alignment, flags);
 	if (ret)
 		return ERR_PTR(ret);
 
@@ -4575,7 +4591,7 @@ int i915_gem_suspend(struct drm_i915_private *dev_priv)
 	ret = i915_gem_wait_for_idle(dev_priv,
 				     I915_WAIT_INTERRUPTIBLE |
 				     I915_WAIT_LOCKED);
-	if (ret)
+	if (ret && ret != -EIO)
 		goto err_unlock;
 
 	assert_kernel_context_is_current(dev_priv);
@@ -4619,11 +4635,12 @@ int i915_gem_suspend(struct drm_i915_private *dev_priv)
 	 * machine in an unusable condition.
 	 */
 	i915_gem_sanitize(dev_priv);
-	goto out_rpm_put;
+
+	intel_runtime_pm_put(dev_priv);
+	return 0;
 
 err_unlock:
 	mutex_unlock(&dev->struct_mutex);
-out_rpm_put:
 	intel_runtime_pm_put(dev_priv);
 	return ret;
 }

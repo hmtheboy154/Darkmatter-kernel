@@ -175,8 +175,13 @@ static void tcp_event_data_sent(struct tcp_sock *tp,
 }
 
 /* Account for an ACK we sent. */
-static inline void tcp_event_ack_sent(struct sock *sk, unsigned int pkts)
+static inline void tcp_event_ack_sent(struct sock *sk, unsigned int pkts,
+				      u32 rcv_nxt)
 {
+	struct tcp_sock *tp = tcp_sk(sk);
+
+	if (unlikely(rcv_nxt != tp->rcv_nxt))
+		return;  /* Special ACK sent by DCTCP to reflect ECN */
 	tcp_dec_quickack_mode(sk, pkts);
 	inet_csk_clear_xmit_timer(sk, ICSK_TIME_DACK);
 }
@@ -984,8 +989,8 @@ static void tcp_internal_pacing(struct sock *sk, const struct sk_buff *skb)
  * We are working here with either a clone of the original
  * SKB, or a fresh unique copy made by the retransmit engine.
  */
-static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
-			    gfp_t gfp_mask)
+static int __tcp_transmit_skb(struct sock *sk, struct sk_buff *skb,
+			      int clone_it, gfp_t gfp_mask, u32 rcv_nxt)
 {
 	const struct inet_connection_sock *icsk = inet_csk(sk);
 	struct inet_sock *inet;
@@ -1057,7 +1062,7 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	th->source		= inet->inet_sport;
 	th->dest		= inet->inet_dport;
 	th->seq			= htonl(tcb->seq);
-	th->ack_seq		= htonl(tp->rcv_nxt);
+	th->ack_seq		= htonl(rcv_nxt);
 	*(((__be16 *)th) + 6)	= htons(((tcp_header_size >> 2) << 12) |
 					tcb->tcp_flags);
 
@@ -1098,7 +1103,7 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 	icsk->icsk_af_ops->send_check(sk, skb);
 
 	if (likely(tcb->tcp_flags & TCPHDR_ACK))
-		tcp_event_ack_sent(sk, tcp_skb_pcount(skb));
+		tcp_event_ack_sent(sk, tcp_skb_pcount(skb), rcv_nxt);
 
 	if (skb->len != tcp_header_size) {
 		tcp_event_data_sent(tp, sk);
@@ -1133,6 +1138,13 @@ static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
 		tcp_rate_skb_sent(sk, oskb);
 	}
 	return err;
+}
+
+static int tcp_transmit_skb(struct sock *sk, struct sk_buff *skb, int clone_it,
+			    gfp_t gfp_mask)
+{
+	return __tcp_transmit_skb(sk, skb, clone_it, gfp_mask,
+				  tcp_sk(sk)->rcv_nxt);
 }
 
 /* This routine just queues the buffer for sending.
@@ -1252,6 +1264,7 @@ int tcp_fragment(struct sock *sk, struct sk_buff *skb, u32 len,
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct sk_buff *buff;
 	int nsize, old_factor;
+	long limit;
 	int nlen;
 	u8 flags;
 
@@ -1261,6 +1274,19 @@ int tcp_fragment(struct sock *sk, struct sk_buff *skb, u32 len,
 	nsize = skb_headlen(skb) - len;
 	if (nsize < 0)
 		nsize = 0;
+
+	/* tcp_sendmsg() can overshoot sk_wmem_queued by one full size skb.
+	 * We need some allowance to not penalize applications setting small
+	 * SO_SNDBUF values.
+	 * Also allow first and last skb in retransmit queue to be split.
+	 */
+	limit = sk->sk_sndbuf + 2 * SKB_TRUESIZE(GSO_MAX_SIZE);
+	if (unlikely((sk->sk_wmem_queued >> 1) > limit &&
+		     skb != tcp_rtx_queue_head(sk) &&
+		     skb != tcp_rtx_queue_tail(sk))) {
+		NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPWQUEUETOOBIG);
+		return -ENOMEM;
+	}
 
 	if (skb_unclone(skb, gfp))
 		return -ENOMEM;
@@ -1430,8 +1456,7 @@ static inline int __tcp_mtu_to_mss(struct sock *sk, int pmtu)
 	mss_now -= icsk->icsk_ext_hdr_len;
 
 	/* Then reserve room for full set of TCP options and 8 bytes of data */
-	if (mss_now < 48)
-		mss_now = 48;
+	mss_now = max(mss_now, sock_net(sk)->ipv4.sysctl_tcp_min_snd_mss);
 	return mss_now;
 }
 
@@ -1681,7 +1706,7 @@ u32 tcp_tso_autosize(const struct sock *sk, unsigned int mss_now,
 	 */
 	segs = max_t(u32, bytes / mss_now, min_tso_segs);
 
-	return min_t(u32, segs, sk->sk_gso_max_segs);
+	return segs;
 }
 EXPORT_SYMBOL(tcp_tso_autosize);
 
@@ -1693,8 +1718,10 @@ static u32 tcp_tso_segs(struct sock *sk, unsigned int mss_now)
 	const struct tcp_congestion_ops *ca_ops = inet_csk(sk)->icsk_ca_ops;
 	u32 tso_segs = ca_ops->tso_segs_goal ? ca_ops->tso_segs_goal(sk) : 0;
 
-	return tso_segs ? :
-		tcp_tso_autosize(sk, mss_now, sysctl_tcp_min_tso_segs);
+	if (!tso_segs)
+		tso_segs = tcp_tso_autosize(sk, mss_now,
+					    sysctl_tcp_min_tso_segs);
+	return min_t(u32, tso_segs, sk->sk_gso_max_segs);
 }
 
 /* Returns the portion of skb which can be sent right away */
@@ -1871,16 +1898,15 @@ static int tso_fragment(struct sock *sk, struct sk_buff *skb, unsigned int len,
  * This algorithm is from John Heffner.
  */
 static bool tcp_tso_should_defer(struct sock *sk, struct sk_buff *skb,
-				 bool *is_cwnd_limited, u32 max_segs)
+				 bool *is_cwnd_limited,
+				 bool *is_rwnd_limited,
+				 u32 max_segs)
 {
 	const struct inet_connection_sock *icsk = inet_csk(sk);
 	u32 age, send_win, cong_win, limit, in_flight;
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct sk_buff *head;
 	int win_divisor;
-
-	if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN)
-		goto send_now;
 
 	if (icsk->icsk_ca_state >= TCP_CA_Recovery)
 		goto send_now;
@@ -1937,10 +1963,27 @@ static bool tcp_tso_should_defer(struct sock *sk, struct sk_buff *skb,
 	if (age < (tp->srtt_us >> 4))
 		goto send_now;
 
-	/* Ok, it looks like it is advisable to defer. */
+	/* Ok, it looks like it is advisable to defer.
+	 * Three cases are tracked :
+	 * 1) We are cwnd-limited
+	 * 2) We are rwnd-limited
+	 * 3) We are application limited.
+	 */
+	if (cong_win < send_win) {
+		if (cong_win <= skb->len) {
+			*is_cwnd_limited = true;
+			return true;
+		}
+	} else {
+		if (send_win <= skb->len) {
+			*is_rwnd_limited = true;
+			return true;
+		}
+	}
 
-	if (cong_win < send_win && cong_win <= skb->len)
-		*is_cwnd_limited = true;
+	/* If this packet won't get more data, do not wait. */
+	if (TCP_SKB_CB(skb)->tcp_flags & TCPHDR_FIN)
+		goto send_now;
 
 	return true;
 
@@ -1971,6 +2014,24 @@ static inline void tcp_mtu_check_reprobe(struct sock *sk)
 		/* Update probe time stamp */
 		icsk->icsk_mtup.probe_timestamp = tcp_jiffies32;
 	}
+}
+
+static bool tcp_can_coalesce_send_queue_head(struct sock *sk, int len)
+{
+	struct sk_buff *skb, *next;
+
+	skb = tcp_send_head(sk);
+	tcp_for_write_queue_from_safe(skb, next, sk) {
+		if (len <= skb->len)
+			break;
+
+		if (unlikely(TCP_SKB_CB(skb)->eor) || tcp_has_tx_tstamp(skb))
+			return false;
+
+		len -= skb->len;
+	}
+
+	return true;
 }
 
 /* Create a new MTU probe if we are ready.
@@ -2045,6 +2106,9 @@ static int tcp_mtu_probe(struct sock *sk)
 			return 0;
 	}
 
+	if (!tcp_can_coalesce_send_queue_head(sk, probe_size))
+		return -1;
+
 	/* We're allowed to probe.  Build it now. */
 	nskb = sk_stream_alloc_skb(sk, probe_size, GFP_ATOMIC, false);
 	if (!nskb)
@@ -2080,6 +2144,11 @@ static int tcp_mtu_probe(struct sock *sk)
 			/* We've eaten all the data from this skb.
 			 * Throw it away. */
 			TCP_SKB_CB(nskb)->tcp_flags |= TCP_SKB_CB(skb)->tcp_flags;
+			/* If this is the last SKB we copy and eor is set
+			 * we need to propagate it to the new skb.
+			 */
+			TCP_SKB_CB(nskb)->eor = TCP_SKB_CB(skb)->eor;
+			tcp_skb_collapse_tstamp(nskb, skb);
 			tcp_unlink_write_queue(skb, sk);
 			sk_wmem_free_skb(sk, skb);
 		} else {
@@ -2289,7 +2358,7 @@ static bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 		} else {
 			if (!push_one &&
 			    tcp_tso_should_defer(sk, skb, &is_cwnd_limited,
-						 max_segs))
+						 &is_rwnd_limited, max_segs))
 				break;
 		}
 
@@ -2434,12 +2503,16 @@ void tcp_send_loss_probe(struct sock *sk)
 		skb = tcp_write_queue_tail(sk);
 	}
 
+	if (unlikely(!skb)) {
+		WARN_ONCE(tp->packets_out,
+			  "invalid inflight: %u state %u cwnd %u mss %d\n",
+			  tp->packets_out, sk->sk_state, tp->snd_cwnd, mss);
+		inet_csk(sk)->icsk_pending = 0;
+		return;
+	}
+
 	/* At most one outstanding TLP retransmission. */
 	if (tp->tlp_high_seq)
-		goto rearm_timer;
-
-	/* Retransmit last segment. */
-	if (WARN_ON(!skb))
 		goto rearm_timer;
 
 	if (skb_still_in_host_queue(sk, skb))
@@ -2665,7 +2738,7 @@ static bool tcp_collapse_retrans(struct sock *sk, struct sk_buff *skb)
 		if (next_skb_size <= skb_availroom(skb))
 			skb_copy_bits(next_skb, 0, skb_put(skb, next_skb_size),
 				      next_skb_size);
-		else if (!skb_shift(skb, next_skb, next_skb_size))
+		else if (!tcp_skb_shift(skb, next_skb, 1, next_skb_size))
 			return false;
 	}
 	tcp_highest_sack_replace(sk, next_skb, skb);
@@ -2787,8 +2860,10 @@ int __tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb, int segs)
 		return -EBUSY;
 
 	if (before(TCP_SKB_CB(skb)->seq, tp->snd_una)) {
-		if (before(TCP_SKB_CB(skb)->end_seq, tp->snd_una))
-			BUG();
+		if (unlikely(before(TCP_SKB_CB(skb)->end_seq, tp->snd_una))) {
+			WARN_ON_ONCE(1);
+			return -EINVAL;
+		}
 		if (tcp_trim_head(sk, skb, tp->snd_una - TCP_SKB_CB(skb)->seq))
 			return -ENOMEM;
 	}
@@ -3285,6 +3360,7 @@ static void tcp_connect_init(struct sock *sk)
 	sock_reset_flag(sk, SOCK_DONE);
 	tp->snd_wnd = 0;
 	tcp_init_wl(tp, 0);
+	tcp_write_queue_purge(sk);
 	tp->snd_una = tp->write_seq;
 	tp->snd_sml = tp->write_seq;
 	tp->snd_up = tp->write_seq;
@@ -3471,8 +3547,6 @@ void tcp_send_delayed_ack(struct sock *sk)
 	int ato = icsk->icsk_ack.ato;
 	unsigned long timeout;
 
-	tcp_ca_event(sk, CA_EVENT_DELAYED_ACK);
-
 	if (ato > TCP_DELACK_MIN) {
 		const struct tcp_sock *tp = tcp_sk(sk);
 		int max_ato = HZ / 2;
@@ -3521,15 +3595,13 @@ void tcp_send_delayed_ack(struct sock *sk)
 }
 
 /* This routine sends an ack and also updates the window. */
-void tcp_send_ack(struct sock *sk)
+void __tcp_send_ack(struct sock *sk, u32 rcv_nxt)
 {
 	struct sk_buff *buff;
 
 	/* If we have been reset, we may not send again. */
 	if (sk->sk_state == TCP_CLOSE)
 		return;
-
-	tcp_ca_event(sk, CA_EVENT_NON_DELAYED_ACK);
 
 	/* We are not putting this on the write queue, so
 	 * tcp_transmit_skb() will set the ownership to this
@@ -3556,9 +3628,14 @@ void tcp_send_ack(struct sock *sk)
 	skb_set_tcp_pure_ack(buff);
 
 	/* Send it off, this clears delayed acks for us. */
-	tcp_transmit_skb(sk, buff, 0, (__force gfp_t)0);
+	__tcp_transmit_skb(sk, buff, 0, (__force gfp_t)0, rcv_nxt);
 }
-EXPORT_SYMBOL_GPL(tcp_send_ack);
+EXPORT_SYMBOL_GPL(__tcp_send_ack);
+
+void tcp_send_ack(struct sock *sk)
+{
+	__tcp_send_ack(sk, tcp_sk(sk)->rcv_nxt);
+}
 
 /* This routine sends a packet with an out of date sequence
  * number. It assumes the other end will try to ack it.

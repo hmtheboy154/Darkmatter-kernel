@@ -392,6 +392,10 @@ static int ovl_create_over_whiteout(struct dentry *dentry, struct inode *inode,
 	if (IS_ERR(upper))
 		goto out_dput;
 
+	err = -ESTALE;
+	if (d_is_negative(upper) || !IS_WHITEOUT(d_inode(upper)))
+		goto out_dput2;
+
 	err = ovl_create_real(wdir, newdentry, cattr, hardlink, true);
 	if (err)
 		goto out_dput2;
@@ -465,7 +469,7 @@ static int ovl_create_or_link(struct dentry *dentry, struct inode *inode,
 			      bool origin)
 {
 	int err;
-	const struct cred *old_cred;
+	const struct cred *old_cred, *hold_cred = NULL;
 	struct cred *override_cred;
 	struct dentry *parent = dentry->d_parent;
 
@@ -492,14 +496,15 @@ static int ovl_create_or_link(struct dentry *dentry, struct inode *inode,
 		override_cred->fsgid = inode->i_gid;
 		if (!hardlink) {
 			err = security_dentry_create_files_as(dentry,
-					attr->mode, &dentry->d_name, old_cred,
+					attr->mode, &dentry->d_name,
+					old_cred ? old_cred : current_cred(),
 					override_cred);
 			if (err) {
 				put_cred(override_cred);
 				goto out_revert_creds;
 			}
 		}
-		put_cred(override_creds(override_cred));
+		hold_cred = override_creds(override_cred);
 		put_cred(override_cred);
 
 		if (!ovl_dentry_is_whiteout(dentry))
@@ -510,7 +515,9 @@ static int ovl_create_or_link(struct dentry *dentry, struct inode *inode,
 							hardlink);
 	}
 out_revert_creds:
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred ?: hold_cred);
+	if (old_cred && hold_cred)
+		put_cred(hold_cred);
 	if (!err) {
 		struct inode *realinode = d_inode(ovl_dentry_upper(dentry));
 
@@ -594,6 +601,11 @@ static int ovl_link(struct dentry *old, struct inode *newdir,
 	err = ovl_copy_up(old);
 	if (err)
 		goto out_drop_write;
+
+	err = ovl_copy_up(new->d_parent);
+	if (err)
+		goto out_drop_write;
+
 
 	err = ovl_nlink_start(old, &locked);
 	if (err)
@@ -764,7 +776,7 @@ static int ovl_do_remove(struct dentry *dentry, bool is_dir)
 		err = ovl_remove_upper(dentry, is_dir);
 	else
 		err = ovl_remove_and_whiteout(dentry, is_dir);
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 	if (!err) {
 		if (is_dir)
 			clear_nlink(dentry->d_inode);
@@ -1080,7 +1092,7 @@ out_dput_old:
 out_unlock:
 	unlock_rename(new_upperdir, old_upperdir);
 out_revert_creds:
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 	ovl_nlink_end(new, locked);
 out_drop_write:
 	ovl_drop_write(old);

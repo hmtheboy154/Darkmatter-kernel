@@ -1860,6 +1860,7 @@ static struct bpf_test tests[] = {
 		},
 		.result = REJECT,
 		.errstr = "invalid stack off=-79992 size=8",
+		.errstr_unpriv = "R1 stack pointer arithmetic goes out of range",
 	},
 	{
 		"PTR_TO_STACK store/load - out of bounds high",
@@ -2243,6 +2244,8 @@ static struct bpf_test tests[] = {
 			BPF_EXIT_INSN(),
 		},
 		.result = ACCEPT,
+		.result_unpriv = REJECT,
+		.errstr_unpriv = "R1 stack pointer arithmetic goes out of range",
 	},
 	{
 		"unpriv: cmp of stack pointer",
@@ -2255,6 +2258,32 @@ static struct bpf_test tests[] = {
 		},
 		.errstr_unpriv = "R2 pointer comparison",
 		.result_unpriv = REJECT,
+		.result = ACCEPT,
+	},
+	{
+		"runtime/jit: pass negative index to tail_call",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_3, -1),
+			BPF_LD_MAP_FD(BPF_REG_2, 0),
+			BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0,
+				     BPF_FUNC_tail_call),
+			BPF_MOV64_IMM(BPF_REG_0, 0),
+			BPF_EXIT_INSN(),
+		},
+		.fixup_prog = { 1 },
+		.result = ACCEPT,
+	},
+	{
+		"runtime/jit: pass > 32bit index to tail_call",
+		.insns = {
+			BPF_LD_IMM64(BPF_REG_3, 0x100000000ULL),
+			BPF_LD_MAP_FD(BPF_REG_2, 0),
+			BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0,
+				     BPF_FUNC_tail_call),
+			BPF_MOV64_IMM(BPF_REG_0, 0),
+			BPF_EXIT_INSN(),
+		},
+		.fixup_prog = { 2 },
 		.result = ACCEPT,
 	},
 	{
@@ -2593,6 +2622,29 @@ static struct bpf_test tests[] = {
 			BPF_EXIT_INSN(),
 		},
 		.result = ACCEPT,
+		.prog_type = BPF_PROG_TYPE_SCHED_CLS,
+	},
+	{
+		"context stores via ST",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, 0),
+			BPF_ST_MEM(BPF_DW, BPF_REG_1, offsetof(struct __sk_buff, mark), 0),
+			BPF_EXIT_INSN(),
+		},
+		.errstr = "BPF_ST stores into R1 context is not allowed",
+		.result = REJECT,
+		.prog_type = BPF_PROG_TYPE_SCHED_CLS,
+	},
+	{
+		"context stores via XADD",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, 0),
+			BPF_RAW_INSN(BPF_STX | BPF_XADD | BPF_W, BPF_REG_1,
+				     BPF_REG_0, offsetof(struct __sk_buff, mark), 0),
+			BPF_EXIT_INSN(),
+		},
+		.errstr = "BPF_XADD stores into R1 context is not allowed",
+		.result = REJECT,
 		.prog_type = BPF_PROG_TYPE_SCHED_CLS,
 	},
 	{
@@ -4317,7 +4369,8 @@ static struct bpf_test tests[] = {
 		.fixup_map1 = { 2 },
 		.errstr_unpriv = "R2 leaks addr into mem",
 		.result_unpriv = REJECT,
-		.result = ACCEPT,
+		.result = REJECT,
+		.errstr = "BPF_XADD stores into R1 context is not allowed",
 	},
 	{
 		"leak pointer into ctx 2",
@@ -4331,7 +4384,8 @@ static struct bpf_test tests[] = {
 		},
 		.errstr_unpriv = "R10 leaks addr into mem",
 		.result_unpriv = REJECT,
-		.result = ACCEPT,
+		.result = REJECT,
+		.errstr = "BPF_XADD stores into R1 context is not allowed",
 	},
 	{
 		"leak pointer into ctx 3",
@@ -5844,7 +5898,7 @@ static struct bpf_test tests[] = {
 			BPF_MOV64_REG(BPF_REG_1, BPF_REG_0),
 			BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0,
 				     BPF_FUNC_map_lookup_elem),
-			BPF_MOV64_REG(BPF_REG_0, 0),
+			BPF_MOV64_IMM(BPF_REG_0, 0),
 			BPF_EXIT_INSN(),
 		},
 		.fixup_map_in_map = { 3 },
@@ -5867,7 +5921,7 @@ static struct bpf_test tests[] = {
 			BPF_ALU64_IMM(BPF_ADD, BPF_REG_1, 8),
 			BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0,
 				     BPF_FUNC_map_lookup_elem),
-			BPF_MOV64_REG(BPF_REG_0, 0),
+			BPF_MOV64_IMM(BPF_REG_0, 0),
 			BPF_EXIT_INSN(),
 		},
 		.fixup_map_in_map = { 3 },
@@ -5890,7 +5944,7 @@ static struct bpf_test tests[] = {
 			BPF_MOV64_REG(BPF_REG_1, BPF_REG_0),
 			BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0,
 				     BPF_FUNC_map_lookup_elem),
-			BPF_MOV64_REG(BPF_REG_0, 0),
+			BPF_MOV64_IMM(BPF_REG_0, 0),
 			BPF_EXIT_INSN(),
 		},
 		.fixup_map_in_map = { 3 },
@@ -6509,7 +6563,7 @@ static struct bpf_test tests[] = {
 			BPF_JMP_IMM(BPF_JA, 0, 0, -7),
 		},
 		.fixup_map1 = { 4 },
-		.errstr = "unbounded min value",
+		.errstr = "R0 invalid mem access 'inv'",
 		.result = REJECT,
 	},
 	{
@@ -6962,6 +7016,7 @@ static struct bpf_test tests[] = {
 		},
 		.fixup_map1 = { 3 },
 		.errstr = "pointer offset 1073741822",
+		.errstr_unpriv = "R0 pointer arithmetic of map value goes out of range",
 		.result = REJECT
 	},
 	{
@@ -6983,6 +7038,7 @@ static struct bpf_test tests[] = {
 		},
 		.fixup_map1 = { 3 },
 		.errstr = "pointer offset -1073741822",
+		.errstr_unpriv = "R0 pointer arithmetic of map value goes out of range",
 		.result = REJECT
 	},
 	{
@@ -7152,6 +7208,7 @@ static struct bpf_test tests[] = {
 			BPF_EXIT_INSN()
 		},
 		.errstr = "fp pointer offset 1073741822",
+		.errstr_unpriv = "R1 stack pointer arithmetic goes out of range",
 		.result = REJECT
 	},
 	{
@@ -7690,6 +7747,127 @@ static struct bpf_test tests[] = {
 		.prog_type = BPF_PROG_TYPE_XDP,
 	},
 	{
+		"check deducing bounds from const, 1",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, 1),
+			BPF_JMP_IMM(BPF_JSGE, BPF_REG_0, 1, 0),
+			BPF_ALU64_REG(BPF_SUB, BPF_REG_0, BPF_REG_1),
+			BPF_EXIT_INSN(),
+		},
+		.result = REJECT,
+		.errstr = "R0 tried to subtract pointer from scalar",
+	},
+	{
+		"check deducing bounds from const, 2",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, 1),
+			BPF_JMP_IMM(BPF_JSGE, BPF_REG_0, 1, 1),
+			BPF_EXIT_INSN(),
+			BPF_JMP_IMM(BPF_JSLE, BPF_REG_0, 1, 1),
+			BPF_EXIT_INSN(),
+			BPF_ALU64_REG(BPF_SUB, BPF_REG_1, BPF_REG_0),
+			BPF_EXIT_INSN(),
+		},
+		.result = ACCEPT,
+	},
+	{
+		"check deducing bounds from const, 3",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, 0),
+			BPF_JMP_IMM(BPF_JSLE, BPF_REG_0, 0, 0),
+			BPF_ALU64_REG(BPF_SUB, BPF_REG_0, BPF_REG_1),
+			BPF_EXIT_INSN(),
+		},
+		.result = REJECT,
+		.errstr = "R0 tried to subtract pointer from scalar",
+	},
+	{
+		"check deducing bounds from const, 4",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, 0),
+			BPF_JMP_IMM(BPF_JSLE, BPF_REG_0, 0, 1),
+			BPF_EXIT_INSN(),
+			BPF_JMP_IMM(BPF_JSGE, BPF_REG_0, 0, 1),
+			BPF_EXIT_INSN(),
+			BPF_ALU64_REG(BPF_SUB, BPF_REG_1, BPF_REG_0),
+			BPF_EXIT_INSN(),
+		},
+		.result = ACCEPT,
+	},
+	{
+		"check deducing bounds from const, 5",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, 0),
+			BPF_JMP_IMM(BPF_JSGE, BPF_REG_0, 0, 1),
+			BPF_ALU64_REG(BPF_SUB, BPF_REG_0, BPF_REG_1),
+			BPF_EXIT_INSN(),
+		},
+		.result = REJECT,
+		.errstr = "R0 tried to subtract pointer from scalar",
+	},
+	{
+		"check deducing bounds from const, 6",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, 0),
+			BPF_JMP_IMM(BPF_JSGE, BPF_REG_0, 0, 1),
+			BPF_EXIT_INSN(),
+			BPF_ALU64_REG(BPF_SUB, BPF_REG_0, BPF_REG_1),
+			BPF_EXIT_INSN(),
+		},
+		.result = REJECT,
+		.errstr = "R0 tried to subtract pointer from scalar",
+	},
+	{
+		"check deducing bounds from const, 7",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, ~0),
+			BPF_JMP_IMM(BPF_JSGE, BPF_REG_0, 0, 0),
+			BPF_ALU64_REG(BPF_SUB, BPF_REG_1, BPF_REG_0),
+			BPF_LDX_MEM(BPF_W, BPF_REG_0, BPF_REG_1,
+				    offsetof(struct __sk_buff, mark)),
+			BPF_EXIT_INSN(),
+		},
+		.result = REJECT,
+		.errstr = "dereference of modified ctx ptr",
+	},
+	{
+		"check deducing bounds from const, 8",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, ~0),
+			BPF_JMP_IMM(BPF_JSGE, BPF_REG_0, 0, 1),
+			BPF_ALU64_REG(BPF_ADD, BPF_REG_1, BPF_REG_0),
+			BPF_LDX_MEM(BPF_W, BPF_REG_0, BPF_REG_1,
+				    offsetof(struct __sk_buff, mark)),
+			BPF_EXIT_INSN(),
+		},
+		.result = REJECT,
+		.errstr = "dereference of modified ctx ptr",
+	},
+	{
+		"check deducing bounds from const, 9",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, 0),
+			BPF_JMP_IMM(BPF_JSGE, BPF_REG_0, 0, 0),
+			BPF_ALU64_REG(BPF_SUB, BPF_REG_0, BPF_REG_1),
+			BPF_EXIT_INSN(),
+		},
+		.result = REJECT,
+		.errstr = "R0 tried to subtract pointer from scalar",
+	},
+	{
+		"check deducing bounds from const, 10",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, 0),
+			BPF_JMP_IMM(BPF_JSLE, BPF_REG_0, 0, 0),
+			/* Marks reg as unknown. */
+			BPF_ALU64_IMM(BPF_NEG, BPF_REG_0, 0),
+			BPF_ALU64_REG(BPF_SUB, BPF_REG_0, BPF_REG_1),
+			BPF_EXIT_INSN(),
+		},
+		.result = REJECT,
+		.errstr = "math between ctx pointer and register with unbounded min value is not allowed",
+	},
+	{
 		"XDP pkt read, pkt_end <= pkt_data', bad access 2",
 		.insns = {
 			BPF_LDX_MEM(BPF_W, BPF_REG_2, BPF_REG_1,
@@ -7707,6 +7885,64 @@ static struct bpf_test tests[] = {
 		.result = REJECT,
 		.prog_type = BPF_PROG_TYPE_XDP,
 		.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
+	},
+	{
+		"xadd/w check unaligned stack",
+		.insns = {
+			BPF_MOV64_IMM(BPF_REG_0, 1),
+			BPF_STX_MEM(BPF_DW, BPF_REG_10, BPF_REG_0, -8),
+			BPF_STX_XADD(BPF_W, BPF_REG_10, BPF_REG_0, -7),
+			BPF_LDX_MEM(BPF_DW, BPF_REG_0, BPF_REG_10, -8),
+			BPF_EXIT_INSN(),
+		},
+		.result = REJECT,
+		.errstr = "misaligned stack access off",
+		.prog_type = BPF_PROG_TYPE_SCHED_CLS,
+	},
+	{
+		"xadd/w check unaligned map",
+		.insns = {
+			BPF_ST_MEM(BPF_DW, BPF_REG_10, -8, 0),
+			BPF_MOV64_REG(BPF_REG_2, BPF_REG_10),
+			BPF_ALU64_IMM(BPF_ADD, BPF_REG_2, -8),
+			BPF_LD_MAP_FD(BPF_REG_1, 0),
+			BPF_RAW_INSN(BPF_JMP | BPF_CALL, 0, 0, 0,
+				     BPF_FUNC_map_lookup_elem),
+			BPF_JMP_IMM(BPF_JNE, BPF_REG_0, 0, 1),
+			BPF_EXIT_INSN(),
+			BPF_MOV64_IMM(BPF_REG_1, 1),
+			BPF_STX_XADD(BPF_W, BPF_REG_0, BPF_REG_1, 3),
+			BPF_LDX_MEM(BPF_W, BPF_REG_0, BPF_REG_0, 3),
+			BPF_EXIT_INSN(),
+		},
+		.fixup_map1 = { 3 },
+		.result = REJECT,
+		.errstr = "misaligned value access off",
+		.prog_type = BPF_PROG_TYPE_SCHED_CLS,
+	},
+	{
+		"xadd/w check unaligned pkt",
+		.insns = {
+			BPF_LDX_MEM(BPF_W, BPF_REG_2, BPF_REG_1,
+				    offsetof(struct xdp_md, data)),
+			BPF_LDX_MEM(BPF_W, BPF_REG_3, BPF_REG_1,
+				    offsetof(struct xdp_md, data_end)),
+			BPF_MOV64_REG(BPF_REG_1, BPF_REG_2),
+			BPF_ALU64_IMM(BPF_ADD, BPF_REG_1, 8),
+			BPF_JMP_REG(BPF_JLT, BPF_REG_1, BPF_REG_3, 2),
+			BPF_MOV64_IMM(BPF_REG_0, 99),
+			BPF_JMP_IMM(BPF_JA, 0, 0, 6),
+			BPF_MOV64_IMM(BPF_REG_0, 1),
+			BPF_ST_MEM(BPF_W, BPF_REG_2, 0, 0),
+			BPF_ST_MEM(BPF_W, BPF_REG_2, 3, 0),
+			BPF_STX_XADD(BPF_W, BPF_REG_2, BPF_REG_0, 1),
+			BPF_STX_XADD(BPF_W, BPF_REG_2, BPF_REG_0, 2),
+			BPF_LDX_MEM(BPF_W, BPF_REG_0, BPF_REG_2, 1),
+			BPF_EXIT_INSN(),
+		},
+		.result = REJECT,
+		.errstr = "BPF_XADD stores into R2 packet",
+		.prog_type = BPF_PROG_TYPE_XDP,
 	},
 };
 
@@ -7840,7 +8076,7 @@ static void do_test_single(struct bpf_test *test, bool unpriv,
 
 	reject_from_alignment = fd_prog < 0 &&
 				(test->flags & F_NEEDS_EFFICIENT_UNALIGNED_ACCESS) &&
-				strstr(bpf_vlog, "Unknown alignment.");
+				strstr(bpf_vlog, "misaligned");
 #ifdef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
 	if (reject_from_alignment) {
 		printf("FAIL\nFailed due to alignment despite having efficient unaligned access: '%s'!\n",

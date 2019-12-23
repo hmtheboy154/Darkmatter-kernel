@@ -19,6 +19,7 @@
 #include <linux/jump_label.h>
 #include <linux/export.h>
 #include <linux/rbtree_latch.h>
+#include <linux/cfi.h>
 
 #include <linux/percpu.h>
 #include <asm/module.h>
@@ -128,13 +129,13 @@ extern void cleanup_module(void);
 #define module_init(initfn)					\
 	static inline initcall_t __maybe_unused __inittest(void)		\
 	{ return initfn; }					\
-	int init_module(void) __attribute__((alias(#initfn)));
+	int init_module(void) __copy(initfn) __attribute__((alias(#initfn)));
 
 /* This is only required if you want to be unloadable. */
 #define module_exit(exitfn)					\
 	static inline exitcall_t __maybe_unused __exittest(void)		\
 	{ return exitfn; }					\
-	void cleanup_module(void) __attribute__((alias(#exitfn)));
+	void cleanup_module(void) __copy(exitfn) __attribute__((alias(#exitfn)));
 
 #endif
 
@@ -345,6 +346,10 @@ struct module {
 	const struct kernel_symbol *syms;
 	const s32 *crcs;
 	unsigned int num_syms;
+
+#ifdef CONFIG_CFI_CLANG
+	cfi_check_fn cfi_check;
+#endif
 
 	/* Kernel parameters. */
 #ifdef CONFIG_SYSFS
@@ -671,6 +676,23 @@ static inline bool is_module_text_address(unsigned long addr)
 	return false;
 }
 
+static inline bool within_module_core(unsigned long addr,
+				      const struct module *mod)
+{
+	return false;
+}
+
+static inline bool within_module_init(unsigned long addr,
+				      const struct module *mod)
+{
+	return false;
+}
+
+static inline bool within_module(unsigned long addr, const struct module *mod)
+{
+	return false;
+}
+
 /* Get/put a kernel symbol (calls should be symmetric) */
 #define symbol_get(x) ({ extern typeof(x) x __attribute__((weak)); &(x); })
 #define symbol_put(x) do { } while (0)
@@ -793,6 +815,15 @@ static inline void module_bug_finalize(const Elf_Ehdr *hdr,
 }
 static inline void module_bug_cleanup(struct module *mod) {}
 #endif	/* CONFIG_GENERIC_BUG */
+
+#ifdef CONFIG_RETPOLINE
+extern bool retpoline_module_ok(bool has_retpoline);
+#else
+static inline bool retpoline_module_ok(bool has_retpoline)
+{
+	return true;
+}
+#endif
 
 #ifdef CONFIG_MODULE_SIG
 static inline bool module_sig_ok(struct module *module)

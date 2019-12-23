@@ -17,6 +17,7 @@
 
 #include "mac.h"
 
+#include <net/cfg80211.h>
 #include <net/mac80211.h>
 #include <linux/etherdevice.h>
 #include <linux/acpi.h>
@@ -1611,6 +1612,10 @@ static int ath10k_mac_setup_prb_tmpl(struct ath10k_vif *arvif)
 	if (arvif->vdev_type != WMI_VDEV_TYPE_AP)
 		return 0;
 
+	 /* For mesh, probe response and beacon share the same template */
+	if (ieee80211_vif_is_mesh(vif))
+		return 0;
+
 	prb = ieee80211_proberesp_get(hw, vif);
 	if (!prb) {
 		ath10k_warn(ar, "failed to get probe resp template from mac80211\n");
@@ -2553,7 +2558,7 @@ static void ath10k_peer_assoc_h_qos(struct ath10k *ar,
 		}
 		break;
 	case WMI_VDEV_TYPE_STA:
-		if (vif->bss_conf.qos)
+		if (sta->wme)
 			arg->peer_flags |= arvif->ar->wmi.peer_flags->qos;
 		break;
 	case WMI_VDEV_TYPE_IBSS:
@@ -3073,6 +3078,13 @@ static int ath10k_update_channel_list(struct ath10k *ar)
 
 			passive = channel->flags & IEEE80211_CHAN_NO_IR;
 			ch->passive = passive;
+
+			/* the firmware is ignoring the "radar" flag of the
+			 * channel and is scanning actively using Probe Requests
+			 * on "Radar detection"/DFS channels which are not
+			 * marked as "available"
+			 */
+			ch->passive |= ch->chan_radar;
 
 			ch->freq = channel->center_freq;
 			ch->band_center_freq1 = channel->center_freq;
@@ -4008,6 +4020,7 @@ void ath10k_mac_tx_push_pending(struct ath10k *ar)
 	rcu_read_unlock();
 	spin_unlock_bh(&ar->txqs_lock);
 }
+EXPORT_SYMBOL(ath10k_mac_tx_push_pending);
 
 /************/
 /* Scanning */
@@ -5923,8 +5936,19 @@ static void ath10k_sta_rc_update_wk(struct work_struct *wk)
 			   ath10k_mac_max_vht_nss(vht_mcs_mask)));
 
 	if (changed & IEEE80211_RC_BW_CHANGED) {
-		ath10k_dbg(ar, ATH10K_DBG_MAC, "mac update sta %pM peer bw %d\n",
-			   sta->addr, bw);
+		enum wmi_phy_mode mode;
+
+		mode = chan_to_phymode(&def);
+		ath10k_dbg(ar, ATH10K_DBG_MAC, "mac update sta %pM peer bw %d phymode %d\n",
+				sta->addr, bw, mode);
+
+		err = ath10k_wmi_peer_set_param(ar, arvif->vdev_id, sta->addr,
+				WMI_PEER_PHYMODE, mode);
+		if (err) {
+			ath10k_warn(ar, "failed to update STA %pM peer phymode %d: %d\n",
+					sta->addr, mode, err);
+			goto exit;
+		}
 
 		err = ath10k_wmi_peer_set_param(ar, arvif->vdev_id, sta->addr,
 						WMI_PEER_CHAN_WIDTH, bw);
@@ -5955,9 +5979,8 @@ static void ath10k_sta_rc_update_wk(struct work_struct *wk)
 				    sta->addr, smps, err);
 	}
 
-	if (changed & IEEE80211_RC_SUPP_RATES_CHANGED ||
-	    changed & IEEE80211_RC_NSS_CHANGED) {
-		ath10k_dbg(ar, ATH10K_DBG_MAC, "mac update sta %pM supp rates/nss\n",
+	if (changed & IEEE80211_RC_SUPP_RATES_CHANGED) {
+		ath10k_dbg(ar, ATH10K_DBG_MAC, "mac update sta %pM supp rates\n",
 			   sta->addr);
 
 		err = ath10k_station_assoc(ar, arvif->vif, sta, true);
@@ -5966,6 +5989,7 @@ static void ath10k_sta_rc_update_wk(struct work_struct *wk)
 				    sta->addr);
 	}
 
+exit:
 	mutex_unlock(&ar->conf_mutex);
 }
 
@@ -6182,6 +6206,16 @@ static int ath10k_sta_state(struct ieee80211_hw *hw,
 		ath10k_dbg(ar, ATH10K_DBG_MAC,
 			   "mac vdev %d peer delete %pM sta %pK (sta gone)\n",
 			   arvif->vdev_id, sta->addr, sta);
+
+		if (sta->tdls) {
+			ret = ath10k_mac_tdls_peer_update(ar, arvif->vdev_id,
+							  sta,
+							  WMI_TDLS_PEER_STATE_TEARDOWN);
+			if (ret)
+				ath10k_warn(ar, "failed to update tdls peer state for %pM state %d: %i\n",
+					    sta->addr,
+					    WMI_TDLS_PEER_STATE_TEARDOWN, ret);
+		}
 
 		ret = ath10k_peer_delete(ar, arvif->vdev_id, sta->addr);
 		if (ret)
@@ -7050,9 +7084,19 @@ static void ath10k_sta_rc_update(struct ieee80211_hw *hw,
 {
 	struct ath10k *ar = hw->priv;
 	struct ath10k_sta *arsta = (struct ath10k_sta *)sta->drv_priv;
+	struct ath10k_vif *arvif = (void *)vif->drv_priv;
+	struct ath10k_peer *peer;
 	u32 bw, smps;
 
 	spin_lock_bh(&ar->data_lock);
+
+	peer = ath10k_peer_find(ar, arvif->vdev_id, sta->addr);
+	if (!peer) {
+		spin_unlock_bh(&ar->data_lock);
+		ath10k_warn(ar, "mac sta rc update failed to find peer %pM on vdev %i\n",
+			    sta->addr, arvif->vdev_id);
+		return;
+	}
 
 	ath10k_dbg(ar, ATH10K_DBG_MAC,
 		   "mac sta rc update for %pM changed %08x bw %d nss %d smps %d\n",
@@ -7801,6 +7845,7 @@ static const struct ieee80211_iface_combination ath10k_10x_if_comb[] = {
 		.max_interfaces = 8,
 		.num_different_channels = 1,
 		.beacon_int_infra_match = true,
+		.beacon_int_min_gcd = 1,
 #ifdef CONFIG_ATH10K_DFS_CERTIFIED
 		.radar_detect_widths =	BIT(NL80211_CHAN_WIDTH_20_NOHT) |
 					BIT(NL80211_CHAN_WIDTH_20) |
@@ -7924,6 +7969,7 @@ static const struct ieee80211_iface_combination ath10k_10_4_if_comb[] = {
 		.max_interfaces = 16,
 		.num_different_channels = 1,
 		.beacon_int_infra_match = true,
+		.beacon_int_min_gcd = 1,
 #ifdef CONFIG_ATH10K_DFS_CERTIFIED
 		.radar_detect_widths =	BIT(NL80211_CHAN_WIDTH_20_NOHT) |
 					BIT(NL80211_CHAN_WIDTH_20) |
@@ -8129,6 +8175,7 @@ int ath10k_mac_register(struct ath10k *ar)
 		ar->hw->wiphy->bands[NL80211_BAND_5GHZ] = band;
 	}
 
+	wiphy_read_of_freq_limits(ar->hw->wiphy);
 	ath10k_mac_setup_ht_vht_cap(ar);
 
 	ar->hw->wiphy->interface_modes =

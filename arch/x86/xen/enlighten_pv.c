@@ -88,6 +88,8 @@
 #include "multicalls.h"
 #include "pmu.h"
 
+#include "../kernel/cpu/cpu.h" /* get_cpu_cap() */
+
 void *xen_initial_gdt;
 
 static int xen_cpu_up_prepare_pv(unsigned int cpu);
@@ -596,12 +598,12 @@ struct trap_array_entry {
 
 static struct trap_array_entry trap_array[] = {
 	{ debug,                       xen_xendebug,                    true },
-	{ int3,                        xen_xenint3,                     true },
 	{ double_fault,                xen_double_fault,                true },
 #ifdef CONFIG_X86_MCE
 	{ machine_check,               xen_machine_check,               true },
 #endif
 	{ nmi,                         xen_xennmi,                      true },
+	{ int3,                        xen_int3,                        false },
 	{ overflow,                    xen_overflow,                    false },
 #ifdef CONFIG_IA32_EMULATION
 	{ entry_INT80_compat,          xen_entry_INT80_compat,          false },
@@ -622,7 +624,7 @@ static struct trap_array_entry trap_array[] = {
 	{ simd_coprocessor_error,      xen_simd_coprocessor_error,      false },
 };
 
-static bool get_trap_addr(void **addr, unsigned int ist)
+static bool __ref get_trap_addr(void **addr, unsigned int ist)
 {
 	unsigned int nr;
 	bool ist_okay = false;
@@ -642,6 +644,14 @@ static bool get_trap_addr(void **addr, unsigned int ist)
 			ist_okay = entry->ist_okay;
 			break;
 		}
+	}
+
+	if (nr == ARRAY_SIZE(trap_array) &&
+	    *addr >= (void *)early_idt_handler_array[0] &&
+	    *addr < (void *)early_idt_handler_array[NUM_EXCEPTION_VECTORS]) {
+		nr = (*addr - (void *)early_idt_handler_array[0]) /
+		     EARLY_IDT_HANDLER_SIZE;
+		*addr = (void *)xen_early_idt_handler_array[nr];
 	}
 
 	if (WARN_ON(ist != 0 && !ist_okay))
@@ -890,10 +900,7 @@ static u64 xen_read_msr_safe(unsigned int msr, int *err)
 	val = native_read_msr_safe(msr, err);
 	switch (msr) {
 	case MSR_IA32_APICBASE:
-#ifdef CONFIG_X86_X2APIC
-		if (!(cpuid_ecx(1) & (1 << (X86_FEATURE_X2APIC & 31))))
-#endif
-			val &= ~X2APIC_ENABLE;
+		val &= ~X2APIC_ENABLE;
 		break;
 	}
 	return val;
@@ -1220,12 +1227,20 @@ asmlinkage __visible void __init xen_start_kernel(void)
 
 	xen_setup_features();
 
-	xen_setup_machphys_mapping();
-
 	/* Install Xen paravirt ops */
 	pv_info = xen_info;
 	pv_init_ops.patch = paravirt_patch_default;
 	pv_cpu_ops = xen_cpu_ops;
+	xen_init_irq_ops();
+
+	/*
+	 * Setup xen_vcpu early because it is needed for
+	 * local_irq_disable(), irqs_disabled(), e.g. in printk().
+	 *
+	 * Don't do the full vcpu_info placement stuff until we have
+	 * the cpu_possible_mask and a non-dummy shared_info.
+	 */
+	xen_vcpu_info_reset(0);
 
 	x86_platform.get_nmi_reason = xen_get_nmi_reason;
 
@@ -1237,6 +1252,7 @@ asmlinkage __visible void __init xen_start_kernel(void)
 	 * Set up some pagetable state before starting to set any ptes.
 	 */
 
+	xen_setup_machphys_mapping();
 	xen_init_mmu_ops();
 
 	/* Prevent unwanted bits from being set in PTEs. */
@@ -1248,9 +1264,6 @@ asmlinkage __visible void __init xen_start_kernel(void)
 	 */
 	__userpte_alloc_gfp &= ~__GFP_HIGHMEM;
 
-	/* Work out if we support NX */
-	x86_configure_nx();
-
 	/* Get mfn list */
 	xen_build_dynamic_phys_to_machine();
 
@@ -1260,7 +1273,15 @@ asmlinkage __visible void __init xen_start_kernel(void)
 	 */
 	xen_setup_gdt(0);
 
-	xen_init_irq_ops();
+	/* Work out if we support NX */
+	get_cpu_cap(&boot_cpu_data);
+	x86_configure_nx();
+
+	/* Let's presume PV guests always boot on vCPU with id 0. */
+	per_cpu(xen_vcpu_id, 0) = 0;
+
+	idt_setup_early_handler();
+
 	xen_init_capabilities();
 
 #ifdef CONFIG_X86_LOCAL_APIC
@@ -1294,18 +1315,6 @@ asmlinkage __visible void __init xen_start_kernel(void)
 	 */
 	acpi_numa = -1;
 #endif
-	/* Let's presume PV guests always boot on vCPU with id 0. */
-	per_cpu(xen_vcpu_id, 0) = 0;
-
-	/*
-	 * Setup xen_vcpu early because start_kernel needs it for
-	 * local_irq_disable(), irqs_disabled().
-	 *
-	 * Don't do the full vcpu_info placement stuff until we have
-	 * the cpu_possible_mask and a non-dummy shared_info.
-	 */
-	xen_vcpu_info_reset(0);
-
 	WARN_ON(xen_cpuhp_setup(xen_cpu_up_prepare_pv, xen_cpu_dead_pv));
 
 	local_irq_disable();

@@ -456,7 +456,7 @@ static inline int ena_alloc_rx_page(struct ena_ring *rx_ring,
 		return -ENOMEM;
 	}
 
-	dma = dma_map_page(rx_ring->dev, page, 0, PAGE_SIZE,
+	dma = dma_map_page(rx_ring->dev, page, 0, ENA_PAGE_SIZE,
 			   DMA_FROM_DEVICE);
 	if (unlikely(dma_mapping_error(rx_ring->dev, dma))) {
 		u64_stats_update_begin(&rx_ring->syncp);
@@ -473,7 +473,7 @@ static inline int ena_alloc_rx_page(struct ena_ring *rx_ring,
 	rx_info->page_offset = 0;
 	ena_buf = &rx_info->ena_buf;
 	ena_buf->paddr = dma;
-	ena_buf->len = PAGE_SIZE;
+	ena_buf->len = ENA_PAGE_SIZE;
 
 	return 0;
 }
@@ -490,7 +490,7 @@ static void ena_free_rx_page(struct ena_ring *rx_ring,
 		return;
 	}
 
-	dma_unmap_page(rx_ring->dev, ena_buf->paddr, PAGE_SIZE,
+	dma_unmap_page(rx_ring->dev, ena_buf->paddr, ENA_PAGE_SIZE,
 		       DMA_FROM_DEVICE);
 
 	__free_page(page);
@@ -910,10 +910,10 @@ static struct sk_buff *ena_rx_skb(struct ena_ring *rx_ring,
 	do {
 		dma_unmap_page(rx_ring->dev,
 			       dma_unmap_addr(&rx_info->ena_buf, paddr),
-			       PAGE_SIZE, DMA_FROM_DEVICE);
+			       ENA_PAGE_SIZE, DMA_FROM_DEVICE);
 
 		skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags, rx_info->page,
-				rx_info->page_offset, len, PAGE_SIZE);
+				rx_info->page_offset, len, ENA_PAGE_SIZE);
 
 		netif_dbg(rx_ring->adapter, rx_status, rx_ring->netdev,
 			  "rx skb updated. len %d. data_len %d\n",
@@ -1565,13 +1565,11 @@ static int ena_rss_configure(struct ena_adapter *adapter)
 
 static int ena_up_complete(struct ena_adapter *adapter)
 {
-	int rc, i;
+	int rc;
 
 	rc = ena_rss_configure(adapter);
 	if (rc)
 		return rc;
-
-	ena_init_napi(adapter);
 
 	ena_change_mtu(adapter->netdev, adapter->netdev->mtu);
 
@@ -1583,17 +1581,6 @@ static int ena_up_complete(struct ena_adapter *adapter)
 	ena_restore_ethtool_params(adapter);
 
 	ena_napi_enable_all(adapter);
-
-	/* Enable completion queues interrupt */
-	for (i = 0; i < adapter->num_queues; i++)
-		ena_unmask_interrupt(&adapter->tx_ring[i],
-				     &adapter->rx_ring[i]);
-
-	/* schedule napi in case we had pending packets
-	 * from the last time we disable napi
-	 */
-	for (i = 0; i < adapter->num_queues; i++)
-		napi_schedule(&adapter->ena_napi[i].napi);
 
 	return 0;
 }
@@ -1731,11 +1718,18 @@ create_err:
 
 static int ena_up(struct ena_adapter *adapter)
 {
-	int rc;
+	int rc, i;
 
 	netdev_dbg(adapter->netdev, "%s\n", __func__);
 
 	ena_setup_io_intr(adapter);
+
+	/* napi poll functions should be initialized before running
+	 * request_irq(), to handle a rare condition where there is a pending
+	 * interrupt, causing the ISR to fire immediately while the poll
+	 * function wasn't set yet, causing a null dereference
+	 */
+	ena_init_napi(adapter);
 
 	rc = ena_request_io_irq(adapter);
 	if (rc)
@@ -1773,6 +1767,17 @@ static int ena_up(struct ena_adapter *adapter)
 	u64_stats_update_end(&adapter->syncp);
 
 	set_bit(ENA_FLAG_DEV_UP, &adapter->flags);
+
+	/* Enable completion queues interrupt */
+	for (i = 0; i < adapter->num_queues; i++)
+		ena_unmask_interrupt(&adapter->tx_ring[i],
+				     &adapter->rx_ring[i]);
+
+	/* schedule napi in case we had pending packets
+	 * from the last time we disable napi
+	 */
+	for (i = 0; i < adapter->num_queues; i++)
+		napi_schedule(&adapter->ena_napi[i].napi);
 
 	return rc;
 
@@ -2224,7 +2229,7 @@ static void ena_config_host_info(struct ena_com_dev *ena_dev)
 
 	host_info->os_type = ENA_ADMIN_OS_LINUX;
 	host_info->kernel_ver = LINUX_VERSION_CODE;
-	strncpy(host_info->kernel_ver_str, utsname()->version,
+	strlcpy(host_info->kernel_ver_str, utsname()->version,
 		sizeof(host_info->kernel_ver_str) - 1);
 	host_info->os_dist = 0;
 	strncpy(host_info->os_dist_str, utsname()->release,
@@ -3059,15 +3064,8 @@ err_rss_init:
 
 static void ena_release_bars(struct ena_com_dev *ena_dev, struct pci_dev *pdev)
 {
-	int release_bars;
+	int release_bars = pci_select_bars(pdev, IORESOURCE_MEM) & ENA_BAR_MASK;
 
-	if (ena_dev->mem_bar)
-		devm_iounmap(&pdev->dev, ena_dev->mem_bar);
-
-	if (ena_dev->reg_bar)
-		devm_iounmap(&pdev->dev, ena_dev->reg_bar);
-
-	release_bars = pci_select_bars(pdev, IORESOURCE_MEM) & ENA_BAR_MASK;
 	pci_release_selected_regions(pdev, release_bars);
 }
 

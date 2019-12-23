@@ -256,7 +256,7 @@ struct ppp_net {
 /* Prototypes. */
 static int ppp_unattached_ioctl(struct net *net, struct ppp_file *pf,
 			struct file *file, unsigned int cmd, unsigned long arg);
-static void ppp_xmit_process(struct ppp *ppp);
+static void ppp_xmit_process(struct ppp *ppp, struct sk_buff *skb);
 static void ppp_send_frame(struct ppp *ppp, struct sk_buff *skb);
 static void ppp_push(struct ppp *ppp);
 static void ppp_channel_push(struct channel *pch);
@@ -512,13 +512,12 @@ static ssize_t ppp_write(struct file *file, const char __user *buf,
 		goto out;
 	}
 
-	skb_queue_tail(&pf->xq, skb);
-
 	switch (pf->kind) {
 	case INTERFACE:
-		ppp_xmit_process(PF_TO_PPP(pf));
+		ppp_xmit_process(PF_TO_PPP(pf), skb);
 		break;
 	case CHANNEL:
+		skb_queue_tail(&pf->xq, skb);
 		ppp_channel_push(PF_TO_CHANNEL(pf));
 		break;
 	}
@@ -1003,17 +1002,18 @@ static int ppp_unit_register(struct ppp *ppp, int unit, bool ifname_is_set)
 	if (!ifname_is_set)
 		snprintf(ppp->dev->name, IFNAMSIZ, "ppp%i", ppp->file.index);
 
+	mutex_unlock(&pn->all_ppp_mutex);
+
 	ret = register_netdevice(ppp->dev);
 	if (ret < 0)
 		goto err_unit;
 
 	atomic_inc(&ppp_unit_count);
 
-	mutex_unlock(&pn->all_ppp_mutex);
-
 	return 0;
 
 err_unit:
+	mutex_lock(&pn->all_ppp_mutex);
 	unit_put(&pn->units_idr, ppp->file.index);
 err:
 	mutex_unlock(&pn->all_ppp_mutex);
@@ -1263,8 +1263,8 @@ ppp_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	put_unaligned_be16(proto, pp);
 
 	skb_scrub_packet(skb, !net_eq(ppp->ppp_net, dev_net(dev)));
-	skb_queue_tail(&ppp->file.xq, skb);
-	ppp_xmit_process(ppp);
+	ppp_xmit_process(ppp, skb);
+
 	return NETDEV_TX_OK;
 
  outf:
@@ -1416,13 +1416,14 @@ static void ppp_setup(struct net_device *dev)
  */
 
 /* Called to do any work queued up on the transmit side that can now be done */
-static void __ppp_xmit_process(struct ppp *ppp)
+static void __ppp_xmit_process(struct ppp *ppp, struct sk_buff *skb)
 {
-	struct sk_buff *skb;
-
 	ppp_xmit_lock(ppp);
 	if (!ppp->closing) {
 		ppp_push(ppp);
+
+		if (skb)
+			skb_queue_tail(&ppp->file.xq, skb);
 		while (!ppp->xmit_pending &&
 		       (skb = skb_dequeue(&ppp->file.xq)))
 			ppp_send_frame(ppp, skb);
@@ -1432,11 +1433,13 @@ static void __ppp_xmit_process(struct ppp *ppp)
 			netif_wake_queue(ppp->dev);
 		else
 			netif_stop_queue(ppp->dev);
+	} else {
+		kfree_skb(skb);
 	}
 	ppp_xmit_unlock(ppp);
 }
 
-static void ppp_xmit_process(struct ppp *ppp)
+static void ppp_xmit_process(struct ppp *ppp, struct sk_buff *skb)
 {
 	local_bh_disable();
 
@@ -1444,7 +1447,7 @@ static void ppp_xmit_process(struct ppp *ppp)
 		goto err;
 
 	(*this_cpu_ptr(ppp->xmit_recursion))++;
-	__ppp_xmit_process(ppp);
+	__ppp_xmit_process(ppp, skb);
 	(*this_cpu_ptr(ppp->xmit_recursion))--;
 
 	local_bh_enable();
@@ -1453,6 +1456,8 @@ static void ppp_xmit_process(struct ppp *ppp)
 
 err:
 	local_bh_enable();
+
+	kfree_skb(skb);
 
 	if (net_ratelimit())
 		netdev_err(ppp->dev, "recursion detected\n");
@@ -1938,7 +1943,7 @@ static void __ppp_channel_push(struct channel *pch)
 	if (skb_queue_empty(&pch->file.xq)) {
 		ppp = pch->ppp;
 		if (ppp)
-			__ppp_xmit_process(ppp);
+			__ppp_xmit_process(ppp, NULL);
 	}
 }
 
@@ -1976,6 +1981,46 @@ ppp_do_recv(struct ppp *ppp, struct sk_buff *skb, struct channel *pch)
 	ppp_recv_unlock(ppp);
 }
 
+/**
+ * __ppp_decompress_proto - Decompress protocol field, slim version.
+ * @skb: Socket buffer where protocol field should be decompressed. It must have
+ *	 at least 1 byte of head room and 1 byte of linear data. First byte of
+ *	 data must be a protocol field byte.
+ *
+ * Decompress protocol field in PPP header if it's compressed, e.g. when
+ * Protocol-Field-Compression (PFC) was negotiated. No checks w.r.t. skb data
+ * length are done in this function.
+ */
+static void __ppp_decompress_proto(struct sk_buff *skb)
+{
+	if (skb->data[0] & 0x01)
+		*(u8 *)skb_push(skb, 1) = 0x00;
+}
+
+/**
+ * ppp_decompress_proto - Check skb data room and decompress protocol field.
+ * @skb: Socket buffer where protocol field should be decompressed. First byte
+ *	 of data must be a protocol field byte.
+ *
+ * Decompress protocol field in PPP header if it's compressed, e.g. when
+ * Protocol-Field-Compression (PFC) was negotiated. This function also makes
+ * sure that skb data room is sufficient for Protocol field, before and after
+ * decompression.
+ *
+ * Return: true - decompressed successfully, false - not enough room in skb.
+ */
+static bool ppp_decompress_proto(struct sk_buff *skb)
+{
+	/* At least one byte should be present (if protocol is compressed) */
+	if (!pskb_may_pull(skb, 1))
+		return false;
+
+	__ppp_decompress_proto(skb);
+
+	/* Protocol field should occupy 2 bytes when not compressed */
+	return pskb_may_pull(skb, 2);
+}
+
 void
 ppp_input(struct ppp_channel *chan, struct sk_buff *skb)
 {
@@ -1988,7 +2033,7 @@ ppp_input(struct ppp_channel *chan, struct sk_buff *skb)
 	}
 
 	read_lock_bh(&pch->upl);
-	if (!pskb_may_pull(skb, 2)) {
+	if (!ppp_decompress_proto(skb)) {
 		kfree_skb(skb);
 		if (pch->ppp) {
 			++pch->ppp->dev->stats.rx_length_errors;
@@ -2085,6 +2130,9 @@ ppp_receive_nonmp_frame(struct ppp *ppp, struct sk_buff *skb)
 	if (ppp->flags & SC_MUST_COMP && ppp->rstate & SC_DC_FERROR)
 		goto err;
 
+	/* At this point the "Protocol" field MUST be decompressed, either in
+	 * ppp_input(), ppp_decompress_frame() or in ppp_receive_mp_frame().
+	 */
 	proto = PPP_PROTO(skb);
 	switch (proto) {
 	case PPP_VJC_COMP:
@@ -2256,6 +2304,9 @@ ppp_decompress_frame(struct ppp *ppp, struct sk_buff *skb)
 		skb_put(skb, len);
 		skb_pull(skb, 2);	/* pull off the A/C bytes */
 
+		/* Don't call __ppp_decompress_proto() here, but instead rely on
+		 * corresponding algo (mppe/bsd/deflate) to decompress it.
+		 */
 	} else {
 		/* Uncompressed frame - pass to decompressor so it
 		   can update its dictionary if necessary. */
@@ -2301,9 +2352,11 @@ ppp_receive_mp_frame(struct ppp *ppp, struct sk_buff *skb, struct channel *pch)
 
 	/*
 	 * Do protocol ID decompression on the first fragment of each packet.
+	 * We have to do that here, because ppp_receive_nonmp_frame() expects
+	 * decompressed protocol field.
 	 */
-	if ((PPP_MP_CB(skb)->BEbits & B) && (skb->data[0] & 1))
-		*(u8 *)skb_push(skb, 1) = 0;
+	if (PPP_MP_CB(skb)->BEbits & B)
+		__ppp_decompress_proto(skb);
 
 	/*
 	 * Expand sequence number to 32 bits, making it as close
@@ -3157,6 +3210,15 @@ ppp_connect_channel(struct channel *pch, int unit)
 		goto outl;
 
 	ppp_lock(ppp);
+	spin_lock_bh(&pch->downl);
+	if (!pch->chan) {
+		/* Don't connect unregistered channels */
+		spin_unlock_bh(&pch->downl);
+		ppp_unlock(ppp);
+		ret = -ENOTCONN;
+		goto outl;
+	}
+	spin_unlock_bh(&pch->downl);
 	if (pch->file.hdrlen > ppp->file.hdrlen)
 		ppp->file.hdrlen = pch->file.hdrlen;
 	hdrlen = pch->file.hdrlen + 2;	/* for protocol bytes */

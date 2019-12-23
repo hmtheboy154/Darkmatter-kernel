@@ -19,8 +19,6 @@
 #ifndef __ASM_MMU_CONTEXT_H
 #define __ASM_MMU_CONTEXT_H
 
-#define FALKOR_RESERVED_ASID	1
-
 #ifndef __ASSEMBLY__
 
 #include <linux/compiler.h>
@@ -55,6 +53,13 @@ static inline void cpu_set_reserved_ttbr0(void)
 
 	write_sysreg(ttbr, ttbr0_el1);
 	isb();
+}
+
+static inline void cpu_switch_mm(pgd_t *pgd, struct mm_struct *mm)
+{
+	BUG_ON(pgd == swapper_pg_dir);
+	cpu_set_reserved_ttbr0();
+	cpu_do_switch_mm(virt_to_phys(pgd),mm);
 }
 
 /*
@@ -127,7 +132,7 @@ static inline void cpu_install_idmap(void)
  * Atomically replaces the active TTBR1_EL1 PGD with a new VA-compatible PGD,
  * avoiding the possibility of conflicting TLB entries being allocated.
  */
-static inline void cpu_replace_ttbr1(pgd_t *pgd)
+static inline void __nocfi cpu_replace_ttbr1(pgd_t *pgd)
 {
 	typedef void (ttbr_replace_func)(phys_addr_t);
 	extern ttbr_replace_func idmap_cpu_replace_ttbr1;
@@ -170,7 +175,7 @@ static inline void update_saved_ttbr0(struct task_struct *tsk,
 	else
 		ttbr = virt_to_phys(mm->pgd) | ASID(mm) << 48;
 
-	task_thread_info(tsk)->ttbr0 = ttbr;
+	WRITE_ONCE(task_thread_info(tsk)->ttbr0, ttbr);
 }
 #else
 static inline void update_saved_ttbr0(struct task_struct *tsk,
@@ -225,6 +230,7 @@ switch_mm(struct mm_struct *prev, struct mm_struct *next,
 #define activate_mm(prev,next)	switch_mm(prev, next, current)
 
 void verify_cpu_asid_bits(void);
+void post_ttbr_update_workaround(void);
 
 #endif /* !__ASSEMBLY__ */
 

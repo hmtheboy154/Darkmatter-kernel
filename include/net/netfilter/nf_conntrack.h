@@ -285,7 +285,7 @@ static inline bool nf_ct_should_gc(const struct nf_conn *ct)
 
 struct kernel_param;
 
-int nf_conntrack_set_hashsize(const char *val, struct kernel_param *kp);
+int nf_conntrack_set_hashsize(const char *val, const struct kernel_param *kp);
 int nf_conntrack_hash_resize(unsigned int hashsize);
 
 extern struct hlist_nulls_head *nf_conntrack_hash;
@@ -314,6 +314,8 @@ struct nf_conn *nf_ct_tmpl_alloc(struct net *net,
 				 const struct nf_conntrack_zone *zone,
 				 gfp_t flags);
 void nf_ct_tmpl_free(struct nf_conn *tmpl);
+
+u32 nf_ct_get_id(const struct nf_conn *ct);
 
 static inline void
 nf_ct_set(struct sk_buff *skb, struct nf_conn *ct, enum ip_conntrack_info info)

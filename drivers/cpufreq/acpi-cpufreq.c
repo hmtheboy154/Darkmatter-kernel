@@ -629,7 +629,7 @@ static int acpi_cpufreq_blacklist(struct cpuinfo_x86 *c)
 	if (c->x86_vendor == X86_VENDOR_INTEL) {
 		if ((c->x86 == 15) &&
 		    (c->x86_model == 6) &&
-		    (c->x86_mask == 8)) {
+		    (c->x86_stepping == 8)) {
 			pr_info("Intel(R) Xeon(R) 7100 Errata AL30, processors may lock up on frequency changes: disabling acpi-cpufreq\n");
 			return -ENODEV;
 		    }
@@ -909,8 +909,10 @@ static void __init acpi_cpufreq_boost_init(void)
 {
 	int ret;
 
-	if (!(boot_cpu_has(X86_FEATURE_CPB) || boot_cpu_has(X86_FEATURE_IDA)))
+	if (!(boot_cpu_has(X86_FEATURE_CPB) || boot_cpu_has(X86_FEATURE_IDA))) {
+		pr_debug("Boost capabilities not present in the processor\n");
 		return;
+	}
 
 	acpi_cpufreq_driver.set_boost = set_boost;
 	acpi_cpufreq_driver.boost_enabled = boost_state(0);

@@ -135,7 +135,6 @@ int restore_sigcontext(struct pt_regs *regs, struct sigcontext __user *sc)
 		 * App's signal handler can save/restore other segments if needed. */
 		COPY_SEG_CPL3(cs);
 #endif /* CONFIG_X86_32 */
-
 		get_user_ex(tmpflags, &sc->flags);
 		regs->flags = (regs->flags & ~FIX_EFLAGS) | (tmpflags & FIX_EFLAGS);
 		regs->orig_ax = -1;		/* disable syscall checks */
@@ -439,6 +438,7 @@ static int __setup_rt_frame(int sig, struct ksignal *ksig,
 {
 	struct rt_sigframe __user *frame;
 	void __user *fp = NULL;
+	unsigned long uc_flags;
 	int err = 0;
 
 	frame = get_sigframe(&ksig->ka, regs, sizeof(struct rt_sigframe), &fp);
@@ -450,6 +450,8 @@ static int __setup_rt_frame(int sig, struct ksignal *ksig,
 		if (copy_siginfo_to_user(&frame->info, &ksig->info))
 			return -EFAULT;
 	}
+
+	uc_flags = sas_ss_flags(regs);
 
 	put_user_try {
 		/* Create the ucontext.  */
@@ -522,6 +524,7 @@ static int x32_setup_rt_frame(struct ksignal *ksig,
 {
 #ifdef CONFIG_X86_X32_ABI
 	struct rt_sigframe_x32 __user *frame;
+	unsigned long uc_flags;
 	void __user *restorer;
 	int err = 0;
 	void __user *fpstate = NULL;
@@ -535,6 +538,8 @@ static int x32_setup_rt_frame(struct ksignal *ksig,
 		if (__copy_siginfo_to_user32(&frame->info, &ksig->info, true))
 			return -EFAULT;
 	}
+
+	uc_flags = sas_ss_flags(regs);
 
 	put_user_try {
 		/* Create the ucontext.  */
@@ -765,7 +770,7 @@ static inline unsigned long get_nr_restart_syscall(const struct pt_regs *regs)
 	 * than the tracee.
 	 */
 #ifdef CONFIG_IA32_EMULATION
-	if (current->thread.status & (TS_COMPAT|TS_I386_REGS_POKED))
+	if (current_thread_info()->status & (TS_COMPAT|TS_I386_REGS_POKED))
 		return __NR_ia32_restart_syscall;
 #endif
 #ifdef CONFIG_X86_X32_ABI

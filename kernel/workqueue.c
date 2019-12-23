@@ -912,6 +912,26 @@ struct task_struct *wq_worker_sleeping(struct task_struct *task)
 }
 
 /**
+ * wq_worker_last_func - retrieve worker's last work function
+ *
+ * Determine the last function a worker executed. This is called from
+ * the scheduler to get a worker's last known identity.
+ *
+ * CONTEXT:
+ * spin_lock_irq(rq->lock)
+ *
+ * Return:
+ * The last work function %current executed as a worker, NULL if it
+ * hasn't executed any work yet.
+ */
+work_func_t wq_worker_last_func(struct task_struct *task)
+{
+	struct worker *worker = kthread_data(task);
+
+	return worker->last_func;
+}
+
+/**
  * worker_set_flags - set worker flags and adjust nr_running accordingly
  * @worker: self
  * @flags: flags to set
@@ -2144,6 +2164,9 @@ __acquires(&pool->lock)
 	/* clear cpu intensive status */
 	if (unlikely(cpu_intensive))
 		worker_clr_flags(worker, WORKER_CPU_INTENSIVE);
+
+	/* tag the worker for identification in schedule() */
+	worker->last_func = worker->current_func;
 
 	/* we're done with it, release */
 	hash_del(&worker->hentry);
@@ -4185,6 +4208,22 @@ void workqueue_set_max_active(struct workqueue_struct *wq, int max_active)
 EXPORT_SYMBOL_GPL(workqueue_set_max_active);
 
 /**
+ * current_work - retrieve %current task's work struct
+ *
+ * Determine if %current task is a workqueue worker and what it's working on.
+ * Useful to find out the context that the %current task is running in.
+ *
+ * Return: work struct if %current task is a workqueue worker, %NULL otherwise.
+ */
+struct work_struct *current_work(void)
+{
+	struct worker *worker = current_wq_worker();
+
+	return worker ? worker->current_work : NULL;
+}
+EXPORT_SYMBOL(current_work);
+
+/**
  * current_is_workqueue_rescuer - is %current workqueue rescuer?
  *
  * Determine whether %current is a workqueue rescuer.  Can be used from
@@ -5334,7 +5373,7 @@ int workqueue_sysfs_register(struct workqueue_struct *wq)
 
 	ret = device_register(&wq_dev->dev);
 	if (ret) {
-		kfree(wq_dev);
+		put_device(&wq_dev->dev);
 		wq->wq_dev = NULL;
 		return ret;
 	}
@@ -5468,7 +5507,7 @@ static void wq_watchdog_timer_fn(unsigned long data)
 	mod_timer(&wq_watchdog_timer, jiffies + thresh);
 }
 
-void wq_watchdog_touch(int cpu)
+notrace void wq_watchdog_touch(int cpu)
 {
 	if (cpu >= 0)
 		per_cpu(wq_watchdog_touched_cpu, cpu) = jiffies;

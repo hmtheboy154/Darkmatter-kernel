@@ -666,6 +666,19 @@ static int set_qp_rss(struct mlx4_ib_dev *dev, struct mlx4_ib_rss *rss_ctx,
 		return (-EOPNOTSUPP);
 	}
 
+	if (ucmd->rx_hash_fields_mask & ~(MLX4_IB_RX_HASH_SRC_IPV4	|
+					  MLX4_IB_RX_HASH_DST_IPV4	|
+					  MLX4_IB_RX_HASH_SRC_IPV6	|
+					  MLX4_IB_RX_HASH_DST_IPV6	|
+					  MLX4_IB_RX_HASH_SRC_PORT_TCP	|
+					  MLX4_IB_RX_HASH_DST_PORT_TCP	|
+					  MLX4_IB_RX_HASH_SRC_PORT_UDP	|
+					  MLX4_IB_RX_HASH_DST_PORT_UDP)) {
+		pr_debug("RX Hash fields_mask has unsupported mask (0x%llx)\n",
+			 ucmd->rx_hash_fields_mask);
+		return (-EOPNOTSUPP);
+	}
+
 	if ((ucmd->rx_hash_fields_mask & MLX4_IB_RX_HASH_SRC_IPV4) &&
 	    (ucmd->rx_hash_fields_mask & MLX4_IB_RX_HASH_DST_IPV4)) {
 		rss_ctx->flags = MLX4_RSS_IPV4;
@@ -691,11 +704,11 @@ static int set_qp_rss(struct mlx4_ib_dev *dev, struct mlx4_ib_rss *rss_ctx,
 			return (-EOPNOTSUPP);
 		}
 
-		if (rss_ctx->flags & MLX4_RSS_IPV4) {
+		if (rss_ctx->flags & MLX4_RSS_IPV4)
 			rss_ctx->flags |= MLX4_RSS_UDP_IPV4;
-		} else if (rss_ctx->flags & MLX4_RSS_IPV6) {
+		if (rss_ctx->flags & MLX4_RSS_IPV6)
 			rss_ctx->flags |= MLX4_RSS_UDP_IPV6;
-		} else {
+		if (!(rss_ctx->flags & (MLX4_RSS_IPV6 | MLX4_RSS_IPV4))) {
 			pr_debug("RX Hash fields_mask is not supported - UDP must be set with IPv4 or IPv6\n");
 			return (-EOPNOTSUPP);
 		}
@@ -707,15 +720,14 @@ static int set_qp_rss(struct mlx4_ib_dev *dev, struct mlx4_ib_rss *rss_ctx,
 
 	if ((ucmd->rx_hash_fields_mask & MLX4_IB_RX_HASH_SRC_PORT_TCP) &&
 	    (ucmd->rx_hash_fields_mask & MLX4_IB_RX_HASH_DST_PORT_TCP)) {
-		if (rss_ctx->flags & MLX4_RSS_IPV4) {
+		if (rss_ctx->flags & MLX4_RSS_IPV4)
 			rss_ctx->flags |= MLX4_RSS_TCP_IPV4;
-		} else if (rss_ctx->flags & MLX4_RSS_IPV6) {
+		if (rss_ctx->flags & MLX4_RSS_IPV6)
 			rss_ctx->flags |= MLX4_RSS_TCP_IPV6;
-		} else {
+		if (!(rss_ctx->flags & (MLX4_RSS_IPV6 | MLX4_RSS_IPV4))) {
 			pr_debug("RX Hash fields_mask is not supported - TCP must be set with IPv4 or IPv6\n");
 			return (-EOPNOTSUPP);
 		}
-
 	} else if ((ucmd->rx_hash_fields_mask & MLX4_IB_RX_HASH_SRC_PORT_TCP) ||
 		   (ucmd->rx_hash_fields_mask & MLX4_IB_RX_HASH_DST_PORT_TCP)) {
 		pr_debug("RX Hash fields_mask is not supported - both TCP SRC and DST must be set\n");
@@ -4002,9 +4014,9 @@ static void to_rdma_ah_attr(struct mlx4_ib_dev *ibdev,
 	u8 port_num = path->sched_queue & 0x40 ? 2 : 1;
 
 	memset(ah_attr, 0, sizeof(*ah_attr));
-	ah_attr->type = rdma_ah_find_type(&ibdev->ib_dev, port_num);
 	if (port_num == 0 || port_num > dev->caps.num_ports)
 		return;
+	ah_attr->type = rdma_ah_find_type(&ibdev->ib_dev, port_num);
 
 	if (ah_attr->type == RDMA_AH_ATTR_TYPE_ROCE)
 		rdma_ah_set_sl(ah_attr, ((path->sched_queue >> 3) & 0x7) |

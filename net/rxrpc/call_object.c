@@ -55,6 +55,8 @@ static void rxrpc_call_timer_expired(unsigned long _call)
 		rxrpc_set_timer(call, rxrpc_timer_expired, ktime_get_real());
 }
 
+static struct lock_class_key rxrpc_call_user_mutex_lock_class_key;
+
 /*
  * find an extant server call
  * - called in process context with IRQs enabled
@@ -95,7 +97,7 @@ found_extant_call:
 /*
  * allocate a new call
  */
-struct rxrpc_call *rxrpc_alloc_call(gfp_t gfp)
+struct rxrpc_call *rxrpc_alloc_call(struct rxrpc_sock *rx, gfp_t gfp)
 {
 	struct rxrpc_call *call;
 
@@ -114,6 +116,14 @@ struct rxrpc_call *rxrpc_alloc_call(gfp_t gfp)
 		goto nomem_2;
 
 	mutex_init(&call->user_mutex);
+
+	/* Prevent lockdep reporting a deadlock false positive between the afs
+	 * filesystem and sys_sendmsg() via the mmap sem.
+	 */
+	if (rx->sk.sk_kern_sock)
+		lockdep_set_class(&call->user_mutex,
+				  &rxrpc_call_user_mutex_lock_class_key);
+
 	setup_timer(&call->timer, rxrpc_call_timer_expired,
 		    (unsigned long)call);
 	INIT_WORK(&call->processor, &rxrpc_process_call);
@@ -150,7 +160,8 @@ nomem:
 /*
  * Allocate a new client call.
  */
-static struct rxrpc_call *rxrpc_alloc_client_call(struct sockaddr_rxrpc *srx,
+static struct rxrpc_call *rxrpc_alloc_client_call(struct rxrpc_sock *rx,
+						  struct sockaddr_rxrpc *srx,
 						  gfp_t gfp)
 {
 	struct rxrpc_call *call;
@@ -158,7 +169,7 @@ static struct rxrpc_call *rxrpc_alloc_client_call(struct sockaddr_rxrpc *srx,
 
 	_enter("");
 
-	call = rxrpc_alloc_call(gfp);
+	call = rxrpc_alloc_call(rx, gfp);
 	if (!call)
 		return ERR_PTR(-ENOMEM);
 	call->state = RXRPC_CALL_CLIENT_AWAIT_CONN;
@@ -209,7 +220,7 @@ struct rxrpc_call *rxrpc_new_client_call(struct rxrpc_sock *rx,
 
 	_enter("%p,%lx", rx, user_call_ID);
 
-	call = rxrpc_alloc_client_call(srx, gfp);
+	call = rxrpc_alloc_client_call(rx, srx, gfp);
 	if (IS_ERR(call)) {
 		release_sock(&rx->sk);
 		_leave(" = %ld", PTR_ERR(call));
@@ -673,27 +684,27 @@ void rxrpc_destroy_all_calls(struct rxrpc_net *rxnet)
 
 	_enter("");
 
-	if (list_empty(&rxnet->calls))
-		return;
+	if (!list_empty(&rxnet->calls)) {
+		write_lock(&rxnet->call_lock);
 
-	write_lock(&rxnet->call_lock);
+		while (!list_empty(&rxnet->calls)) {
+			call = list_entry(rxnet->calls.next,
+					  struct rxrpc_call, link);
+			_debug("Zapping call %p", call);
 
-	while (!list_empty(&rxnet->calls)) {
-		call = list_entry(rxnet->calls.next, struct rxrpc_call, link);
-		_debug("Zapping call %p", call);
+			rxrpc_see_call(call);
+			list_del_init(&call->link);
 
-		rxrpc_see_call(call);
-		list_del_init(&call->link);
+			pr_err("Call %p still in use (%d,%s,%lx,%lx)!\n",
+			       call, atomic_read(&call->usage),
+			       rxrpc_call_states[call->state],
+			       call->flags, call->events);
 
-		pr_err("Call %p still in use (%d,%s,%lx,%lx)!\n",
-		       call, atomic_read(&call->usage),
-		       rxrpc_call_states[call->state],
-		       call->flags, call->events);
+			write_unlock(&rxnet->call_lock);
+			cond_resched();
+			write_lock(&rxnet->call_lock);
+		}
 
 		write_unlock(&rxnet->call_lock);
-		cond_resched();
-		write_lock(&rxnet->call_lock);
 	}
-
-	write_unlock(&rxnet->call_lock);
 }

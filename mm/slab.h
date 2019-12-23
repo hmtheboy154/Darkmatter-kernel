@@ -40,7 +40,6 @@ struct kmem_cache {
 
 #include <linux/memcontrol.h>
 #include <linux/fault-inject.h>
-#include <linux/kmemcheck.h>
 #include <linux/kasan.h>
 #include <linux/kmemleak.h>
 #include <linux/random.h>
@@ -142,10 +141,10 @@ static inline unsigned long kmem_cache_flags(unsigned long object_size,
 #if defined(CONFIG_SLAB)
 #define SLAB_CACHE_FLAGS (SLAB_MEM_SPREAD | SLAB_NOLEAKTRACE | \
 			  SLAB_RECLAIM_ACCOUNT | SLAB_TEMPORARY | \
-			  SLAB_NOTRACK | SLAB_ACCOUNT)
+			  SLAB_ACCOUNT)
 #elif defined(CONFIG_SLUB)
 #define SLAB_CACHE_FLAGS (SLAB_NOLEAKTRACE | SLAB_RECLAIM_ACCOUNT | \
-			  SLAB_TEMPORARY | SLAB_NOTRACK | SLAB_ACCOUNT)
+			  SLAB_TEMPORARY | SLAB_ACCOUNT)
 #else
 #define SLAB_CACHE_FLAGS (0)
 #endif
@@ -164,9 +163,9 @@ static inline unsigned long kmem_cache_flags(unsigned long object_size,
 			      SLAB_NOLEAKTRACE | \
 			      SLAB_RECLAIM_ACCOUNT | \
 			      SLAB_TEMPORARY | \
-			      SLAB_NOTRACK | \
 			      SLAB_ACCOUNT)
 
+bool __kmem_cache_empty(struct kmem_cache *);
 int __kmem_cache_shutdown(struct kmem_cache *);
 void __kmem_cache_release(struct kmem_cache *);
 int __kmem_cache_shrink(struct kmem_cache *);
@@ -437,12 +436,9 @@ static inline void slab_post_alloc_hook(struct kmem_cache *s, gfp_t flags,
 
 	flags &= gfp_allowed_mask;
 	for (i = 0; i < size; i++) {
-		void *object = p[i];
-
-		kmemcheck_slab_alloc(s, flags, object, slab_ksize(s));
-		kmemleak_alloc_recursive(object, s->object_size, 1,
+		p[i] = kasan_slab_alloc(s, p[i], flags);
+		kmemleak_alloc_recursive(p[i], s->object_size, 1,
 					 s->flags, flags);
-		kasan_slab_alloc(s, object, flags);
 	}
 
 	if (memcg_kmem_enabled())
@@ -520,5 +516,25 @@ static inline int cache_random_seq_create(struct kmem_cache *cachep,
 }
 static inline void cache_random_seq_destroy(struct kmem_cache *cachep) { }
 #endif /* CONFIG_SLAB_FREELIST_RANDOM */
+
+static inline bool slab_want_init_on_alloc(gfp_t flags, struct kmem_cache *c)
+{
+	if (static_branch_unlikely(&init_on_alloc)) {
+		if (c->ctor)
+			return false;
+		if (c->flags & (SLAB_TYPESAFE_BY_RCU | SLAB_POISON))
+			return flags & __GFP_ZERO;
+		return true;
+	}
+	return flags & __GFP_ZERO;
+}
+
+static inline bool slab_want_init_on_free(struct kmem_cache *c)
+{
+	if (static_branch_unlikely(&init_on_free))
+		return !(c->ctor ||
+			 (c->flags & (SLAB_TYPESAFE_BY_RCU | SLAB_POISON)));
+	return false;
+}
 
 #endif /* MM_SLAB_H */

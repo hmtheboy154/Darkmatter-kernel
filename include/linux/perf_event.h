@@ -408,7 +408,7 @@ struct pmu {
 	/*
 	 * Set up pmu-private data structures for an AUX area
 	 */
-	void *(*setup_aux)		(int cpu, void **pages,
+	void *(*setup_aux)		(struct perf_event *event, void **pages,
 					 int nr_pages, bool overwrite);
 					/* optional */
 
@@ -446,6 +446,11 @@ struct pmu {
 	 * Filter events for PMU-specific reasons.
 	 */
 	int (*filter_match)		(struct perf_event *event); /* optional */
+
+	/*
+	 * Check period value for PERF_EVENT_IOC_PERIOD ioctl.
+	 */
+	int (*check_period)		(struct perf_event *event, u64 value); /* optional */
 };
 
 /**
@@ -461,7 +466,7 @@ struct pmu {
  */
 struct perf_addr_filter {
 	struct list_head	entry;
-	struct inode		*inode;
+	struct path		path;
 	unsigned long		offset;
 	unsigned long		size;
 	unsigned int		range	: 1,
@@ -482,6 +487,11 @@ struct perf_addr_filters_head {
 	struct list_head	list;
 	raw_spinlock_t		lock;
 	unsigned int		nr_file_filters;
+};
+
+struct perf_addr_filter_range {
+	unsigned long		start;
+	unsigned long		size;
 };
 
 /**
@@ -672,7 +682,7 @@ struct perf_event {
 	/* address range filters */
 	struct perf_addr_filters_head	addr_filters;
 	/* vma address array for file-based filders */
-	unsigned long			*addr_filters_offs;
+	struct perf_addr_filter_range	*addr_filter_ranges;
 	unsigned long			addr_filters_gen;
 
 	void (*destroy)(struct perf_event *);

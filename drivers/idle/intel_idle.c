@@ -1063,7 +1063,7 @@ static const struct idle_cpu idle_cpu_dnv = {
 };
 
 #define ICPU(model, cpu) \
-	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_MWAIT, (unsigned long)&cpu }
+	{ X86_VENDOR_INTEL, 6, model, X86_FEATURE_ANY, (unsigned long)&cpu }
 
 static const struct x86_cpu_id intel_idle_ids[] __initconst = {
 	ICPU(INTEL_FAM6_NEHALEM_EP,		idle_cpu_nehalem),
@@ -1072,14 +1072,14 @@ static const struct x86_cpu_id intel_idle_ids[] __initconst = {
 	ICPU(INTEL_FAM6_WESTMERE,		idle_cpu_nehalem),
 	ICPU(INTEL_FAM6_WESTMERE_EP,		idle_cpu_nehalem),
 	ICPU(INTEL_FAM6_NEHALEM_EX,		idle_cpu_nehalem),
-	ICPU(INTEL_FAM6_ATOM_PINEVIEW,		idle_cpu_atom),
-	ICPU(INTEL_FAM6_ATOM_LINCROFT,		idle_cpu_lincroft),
+	ICPU(INTEL_FAM6_ATOM_BONNELL,		idle_cpu_atom),
+	ICPU(INTEL_FAM6_ATOM_BONNELL_MID,		idle_cpu_lincroft),
 	ICPU(INTEL_FAM6_WESTMERE_EX,		idle_cpu_nehalem),
 	ICPU(INTEL_FAM6_SANDYBRIDGE,		idle_cpu_snb),
 	ICPU(INTEL_FAM6_SANDYBRIDGE_X,		idle_cpu_snb),
-	ICPU(INTEL_FAM6_ATOM_CEDARVIEW,		idle_cpu_atom),
-	ICPU(INTEL_FAM6_ATOM_SILVERMONT1,	idle_cpu_byt),
-	ICPU(INTEL_FAM6_ATOM_MERRIFIELD,	idle_cpu_tangier),
+	ICPU(INTEL_FAM6_ATOM_SALTWELL,		idle_cpu_atom),
+	ICPU(INTEL_FAM6_ATOM_SILVERMONT,	idle_cpu_byt),
+	ICPU(INTEL_FAM6_ATOM_SILVERMONT_MID,	idle_cpu_tangier),
 	ICPU(INTEL_FAM6_ATOM_AIRMONT,		idle_cpu_cht),
 	ICPU(INTEL_FAM6_IVYBRIDGE,		idle_cpu_ivb),
 	ICPU(INTEL_FAM6_IVYBRIDGE_X,		idle_cpu_ivt),
@@ -1087,7 +1087,7 @@ static const struct x86_cpu_id intel_idle_ids[] __initconst = {
 	ICPU(INTEL_FAM6_HASWELL_X,		idle_cpu_hsw),
 	ICPU(INTEL_FAM6_HASWELL_ULT,		idle_cpu_hsw),
 	ICPU(INTEL_FAM6_HASWELL_GT3E,		idle_cpu_hsw),
-	ICPU(INTEL_FAM6_ATOM_SILVERMONT2,	idle_cpu_avn),
+	ICPU(INTEL_FAM6_ATOM_SILVERMONT_X,	idle_cpu_avn),
 	ICPU(INTEL_FAM6_BROADWELL_CORE,		idle_cpu_bdw),
 	ICPU(INTEL_FAM6_BROADWELL_GT3E,		idle_cpu_bdw),
 	ICPU(INTEL_FAM6_BROADWELL_X,		idle_cpu_bdw),
@@ -1100,8 +1100,8 @@ static const struct x86_cpu_id intel_idle_ids[] __initconst = {
 	ICPU(INTEL_FAM6_XEON_PHI_KNL,		idle_cpu_knl),
 	ICPU(INTEL_FAM6_XEON_PHI_KNM,		idle_cpu_knl),
 	ICPU(INTEL_FAM6_ATOM_GOLDMONT,		idle_cpu_bxt),
-	ICPU(INTEL_FAM6_ATOM_GEMINI_LAKE,	idle_cpu_bxt),
-	ICPU(INTEL_FAM6_ATOM_DENVERTON,		idle_cpu_dnv),
+	ICPU(INTEL_FAM6_ATOM_GOLDMONT_PLUS,	idle_cpu_bxt),
+	ICPU(INTEL_FAM6_ATOM_GOLDMONT_X,	idle_cpu_dnv),
 	{}
 };
 
@@ -1124,6 +1124,11 @@ static int __init intel_idle_probe(void)
 		    boot_cpu_data.x86 == 6)
 			pr_debug("does not run on family %d model %d\n",
 				 boot_cpu_data.x86, boot_cpu_data.x86_model);
+		return -ENODEV;
+	}
+
+	if (!boot_cpu_has(X86_FEATURE_MWAIT)) {
+		pr_debug("Please enable MWAIT in BIOS SETUP\n");
 		return -ENODEV;
 	}
 
@@ -1313,7 +1318,7 @@ static void intel_idle_state_table_update(void)
 		ivt_idle_state_table_update();
 		break;
 	case INTEL_FAM6_ATOM_GOLDMONT:
-	case INTEL_FAM6_ATOM_GEMINI_LAKE:
+	case INTEL_FAM6_ATOM_GOLDMONT_PLUS:
 		bxt_idle_state_table_update();
 		break;
 	case INTEL_FAM6_SKYLAKE_DESKTOP:

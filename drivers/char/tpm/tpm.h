@@ -93,14 +93,20 @@ enum tpm2_structures {
 	TPM2_ST_SESSIONS	= 0x8002,
 };
 
+/* Indicates from what layer of the software stack the error comes from */
+#define TSS2_RC_LAYER_SHIFT	 16
+#define TSS2_RESMGR_TPM_RC_LAYER (11 << TSS2_RC_LAYER_SHIFT)
+
 enum tpm2_return_codes {
 	TPM2_RC_SUCCESS		= 0x0000,
 	TPM2_RC_HASH		= 0x0083, /* RC_FMT1 */
 	TPM2_RC_HANDLE		= 0x008B,
 	TPM2_RC_INITIALIZE	= 0x0100, /* RC_VER1 */
 	TPM2_RC_DISABLED	= 0x0120,
+	TPM2_RC_COMMAND_CODE    = 0x0143,
 	TPM2_RC_TESTING		= 0x090A, /* RC_WARN */
 	TPM2_RC_REFERENCE_H0	= 0x0910,
+	TPM2_RC_RETRY		= 0x0922,
 };
 
 enum tpm2_algorithms {
@@ -345,17 +351,6 @@ enum tpm_sub_capabilities {
 	TPM_CAP_PROP_TIS_DURATION = 0x120,
 };
 
-struct	tpm_readpubek_params_out {
-	u8	algorithm[4];
-	u8	encscheme[2];
-	u8	sigscheme[2];
-	__be32	paramsize;
-	u8	parameters[12]; /*assuming RSA*/
-	__be32	keysize;
-	u8	modulus[256];
-	u8	checksum[20];
-} __packed;
-
 typedef union {
 	struct	tpm_input_header in;
 	struct	tpm_output_header out;
@@ -385,8 +380,6 @@ struct tpm_getrandom_in {
 } __packed;
 
 typedef union {
-	struct	tpm_readpubek_params_out readpubek_out;
-	u8	readpubek_out_buffer[sizeof(struct tpm_readpubek_params_out)];
 	struct	tpm_pcrread_in	pcrread_in;
 	struct	tpm_pcrread_out	pcrread_out;
 	struct	tpm_getrandom_in getrandom_in;
@@ -505,9 +498,17 @@ extern const struct file_operations tpm_fops;
 extern const struct file_operations tpmrm_fops;
 extern struct idr dev_nums_idr;
 
+/**
+ * enum tpm_transmit_flags
+ *
+ * @TPM_TRANSMIT_UNLOCKED: used to lock sequence of tpm_transmit calls.
+ * @TPM_TRANSMIT_RAW: prevent recursive calls into setup steps
+ *                    (go idle, locality,..). Always use with UNLOCKED
+ *                    as it will fail on double locking.
+ */
 enum tpm_transmit_flags {
-	TPM_TRANSMIT_UNLOCKED	= BIT(0),
-	TPM_TRANSMIT_RAW	= BIT(1),
+	TPM_TRANSMIT_UNLOCKED = BIT(0),
+	TPM_TRANSMIT_RAW      = BIT(1),
 };
 
 ssize_t tpm_transmit(struct tpm_chip *chip, struct tpm_space *space,

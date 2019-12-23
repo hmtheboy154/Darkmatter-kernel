@@ -16,6 +16,12 @@ config DEFCONFIG_LIST
 	default "$ARCH_DEFCONFIG"
 	default "arch/$ARCH/defconfig"
 
+config TOOLS_SUPPORT_RELR
+	bool "Declare tool support for RELR"
+	# Prevent this from being enabled by default in allyesconfig or
+	# allmodconfig builds.
+	depends on !COMPILE_TEST
+
 config CONSTRUCTORS
 	bool
 	depends on !UML
@@ -479,6 +485,45 @@ config TASK_IO_ACCOUNTING
 
 	  Say N if unsure.
 
+config PSI
+	bool "Pressure stall information tracking"
+	help
+	  Collect metrics that indicate how overcommitted the CPU, memory,
+	  and IO capacity are in the system.
+
+	  If you say Y here, the kernel will create /proc/pressure/ with the
+	  pressure statistics files cpu, memory, and io. These will indicate
+	  the share of walltime in which some or all tasks in the system are
+	  delayed due to contention of the respective resource.
+
+	  In kernels with cgroup support, cgroups (cgroup2 only) will
+	  have cpu.pressure, memory.pressure, and io.pressure files,
+	  which aggregate pressure stalls for the grouped tasks only.
+
+	  For more details see Documentation/accounting/psi.txt.
+
+	  Say N if unsure.
+
+config PSI_DEFAULT_DISABLED
+	bool "Require boot parameter to enable pressure stall information tracking"
+	default n
+	depends on PSI
+	help
+	  If set, pressure stall information tracking will be disabled
+	  per default but can be enabled through passing psi=1 on the
+	  kernel commandline during boot.
+
+	  This feature adds some code to the task wakeup and sleep
+	  paths of the scheduler. The overhead is too low to affect
+	  common scheduling-intense workloads in practice (such as
+	  webservers, memcache), but it does show up in artificial
+	  scheduler stress tests, such as hackbench.
+
+	  If you are paranoid and not sure what the kernel will be
+	  used for, say Y.
+
+	  Say N if unsure.
+
 endmenu # "CPU/Task time and stats accounting"
 
 source "kernel/rcu/Kconfig"
@@ -506,6 +551,15 @@ config IKCONFIG_PROC
 	---help---
 	  This option enables access to the kernel configuration file
 	  through /proc/config.gz.
+
+config IKHEADERS
+	tristate "Enable kernel headers through /sys/kernel/kheaders.tar.xz"
+	depends on SYSFS
+	help
+	  This option enables access to the in-kernel headers that are generated during
+	  the build process. These can be used to build eBPF tracing programs,
+	  or similar programs.  If you build the headers as a module, a module called
+	  kheaders.ko is built which can be loaded on-demand to get access to headers.
 
 config LOG_BUF_SHIFT
 	int "Kernel log buffer size (16 => 64KB, 17 => 128KB)"
@@ -594,6 +648,41 @@ config HAVE_UNSTABLE_SCHED_CLOCK
 
 config GENERIC_SCHED_CLOCK
 	bool
+
+menu "FAIR Scheuler tunables"
+
+choice
+	prompt "Utilization's PELT half-Life"
+	default PELT_UTIL_HALFLIFE_32
+	help
+	  Allows choosing one of the possible values for the PELT half-life to
+	  be used for the update of the utilization of tasks and CPUs.
+	  The half-life is the amount of [ms] required by the PELT signal to
+	  build up to 50% utilization. The higher the half-life the longer it
+	  takes for a task to be represented as a big one.
+
+	  If not sure, use the default of 32 ms.
+
+config PELT_UTIL_HALFLIFE_32
+	bool "32 ms, default for server"
+
+config PELT_UTIL_HALFLIFE_16
+	bool "16 ms, suggested for interactive workloads"
+	help
+	  Use 16ms as PELT half-life value. This will increase the ramp-up and
+	  decay of utlization and load twice as fast as for the default
+	  configuration using 32ms.
+
+config PELT_UTIL_HALFLIFE_8
+	bool "8 ms, very fast"
+	help
+	  Use 8ms as PELT half-life value. This will increase the ramp-up and
+	  decay of utlization and load four time as fast as for the default
+	  configuration using 32ms.
+
+endchoice
+
+endmenu # FAIR Scheduler tunables"
 
 #
 # For architectures that want to enable the support for NUMA-affine scheduler
@@ -1097,9 +1186,6 @@ endchoice
 config SYSCTL
 	bool
 
-config ANON_INODES
-	bool
-
 config HAVE_UID16
 	bool
 
@@ -1339,14 +1425,12 @@ config HAVE_FUTEX_CMPXCHG
 config EPOLL
 	bool "Enable eventpoll support" if EXPERT
 	default y
-	select ANON_INODES
 	help
 	  Disabling this option will cause the kernel to be built without
 	  support for epoll family of system calls.
 
 config SIGNALFD
 	bool "Enable signalfd() system call" if EXPERT
-	select ANON_INODES
 	default y
 	help
 	  Enable the signalfd() system call that allows to receive signals
@@ -1356,7 +1440,6 @@ config SIGNALFD
 
 config TIMERFD
 	bool "Enable timerfd() system call" if EXPERT
-	select ANON_INODES
 	default y
 	help
 	  Enable the timerfd() system call that allows to receive timer
@@ -1366,7 +1449,6 @@ config TIMERFD
 
 config EVENTFD
 	bool "Enable eventfd() system call" if EXPERT
-	select ANON_INODES
 	default y
 	help
 	  Enable the eventfd() system call that allows to receive both
@@ -1377,12 +1459,18 @@ config EVENTFD
 # syscall, maps, verifier
 config BPF_SYSCALL
 	bool "Enable bpf() system call"
-	select ANON_INODES
 	select BPF
 	default n
 	help
 	  Enable the bpf() system call that allows to manipulate eBPF
 	  programs and maps via file descriptors.
+
+config BPF_JIT_ALWAYS_ON
+	bool "Permanently enable BPF JIT and remove BPF interpreter"
+	depends on BPF_SYSCALL && HAVE_EBPF_JIT && BPF_JIT
+	help
+	  Enables BPF JIT and removes BPF interpreter to avoid
+	  speculative execution of BPF instructions by the interpreter
 
 config SHMEM
 	bool "Use full shmem filesystem" if EXPERT
@@ -1415,7 +1503,6 @@ config ADVISE_SYSCALLS
 
 config USERFAULTFD
 	bool "Enable userfaultfd() system call"
-	select ANON_INODES
 	depends on MMU
 	help
 	  Enable the userfaultfd() system call that allows to intercept and
@@ -1474,7 +1561,6 @@ config PERF_EVENTS
 	bool "Kernel performance events and counters"
 	default y if PROFILING
 	depends on HAVE_PERF_EVENTS
-	select ANON_INODES
 	select IRQ_WORK
 	select SRCU
 	help
@@ -1922,7 +2008,7 @@ endif # MODULES
 
 config MODULES_TREE_LOOKUP
 	def_bool y
-	depends on PERF_EVENTS || TRACING
+	depends on PERF_EVENTS || TRACING || CFI_CLANG
 
 config INIT_ALL_POSSIBLE
 	bool

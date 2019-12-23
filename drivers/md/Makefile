@@ -63,6 +63,7 @@ obj-$(CONFIG_DM_ERA)		+= dm-era.o
 obj-$(CONFIG_DM_LOG_WRITES)	+= dm-log-writes.o
 obj-$(CONFIG_DM_INTEGRITY)	+= dm-integrity.o
 obj-$(CONFIG_DM_ZONED)		+= dm-zoned.o
+obj-$(CONFIG_DM_BOW)		+= dm-bow.o
 
 ifeq ($(CONFIG_DM_UEVENT),y)
 dm-mod-objs			+= dm-uevent.o
@@ -70,6 +71,10 @@ endif
 
 ifeq ($(CONFIG_DM_VERITY_FEC),y)
 dm-verity-objs			+= dm-verity-fec.o
+endif
+
+ifeq ($(CONFIG_DM_VERITY_AVB),y)
+dm-verity-objs			+= dm-verity-avb.o
 endif
 
 ifeq ($(CONFIG_DM_ANDROID_VERITY),y)

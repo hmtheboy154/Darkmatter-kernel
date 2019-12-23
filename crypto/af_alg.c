@@ -122,8 +122,10 @@ static void alg_do_release(const struct af_alg_type *type, void *private)
 
 int af_alg_release(struct socket *sock)
 {
-	if (sock->sk)
+	if (sock->sk) {
 		sock_put(sock->sk);
+		sock->sk = NULL;
+	}
 	return 0;
 }
 EXPORT_SYMBOL_GPL(af_alg_release);
@@ -150,7 +152,7 @@ EXPORT_SYMBOL_GPL(af_alg_release_parent);
 
 static int alg_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 {
-	const u32 forbidden = CRYPTO_ALG_INTERNAL;
+	const u32 allowed = CRYPTO_ALG_KERN_DRIVER_ONLY;
 	struct sock *sk = sock->sk;
 	struct alg_sock *ask = alg_sk(sk);
 	struct sockaddr_alg *sa = (void *)uaddr;
@@ -162,6 +164,10 @@ static int alg_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		return -EINVAL;
 
 	if (addr_len < sizeof(*sa))
+		return -EINVAL;
+
+	/* If caller uses non-allowed flag, return error. */
+	if ((sa->salg_feat & ~allowed) || (sa->salg_mask & ~allowed))
 		return -EINVAL;
 
 	sa->salg_type[sizeof(sa->salg_type) - 1] = 0;
@@ -176,9 +182,7 @@ static int alg_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	if (IS_ERR(type))
 		return PTR_ERR(type);
 
-	private = type->bind(sa->salg_name,
-			     sa->salg_feat & ~forbidden,
-			     sa->salg_mask & ~forbidden);
+	private = type->bind(sa->salg_name, sa->salg_feat, sa->salg_mask);
 	if (IS_ERR(private)) {
 		module_put(type->owner);
 		return PTR_ERR(private);
@@ -691,7 +695,7 @@ void af_alg_free_areq_sgls(struct af_alg_async_req *areq)
 	unsigned int i;
 
 	list_for_each_entry_safe(rsgl, tmp, &areq->rsgl_list, list) {
-		ctx->rcvused -= rsgl->sg_num_bytes;
+		atomic_sub(rsgl->sg_num_bytes, &ctx->rcvused);
 		af_alg_free_sg(&rsgl->sgl);
 		list_del(&rsgl->list);
 		if (rsgl != &areq->first_rsgl)
@@ -1181,8 +1185,10 @@ int af_alg_get_rsgl(struct sock *sk, struct msghdr *msg, int flags,
 
 		/* make one iovec available as scatterlist */
 		err = af_alg_make_sg(&rsgl->sgl, &msg->msg_iter, seglen);
-		if (err < 0)
+		if (err < 0) {
+			rsgl->sg_num_bytes = 0;
 			return err;
+		}
 
 		/* chain the new scatterlist with previous one */
 		if (areq->last_rsgl)
@@ -1190,7 +1196,7 @@ int af_alg_get_rsgl(struct sock *sk, struct msghdr *msg, int flags,
 
 		areq->last_rsgl = rsgl;
 		len += err;
-		ctx->rcvused += err;
+		atomic_add(err, &ctx->rcvused);
 		rsgl->sg_num_bytes = err;
 		iov_iter_advance(&msg->msg_iter, err);
 	}

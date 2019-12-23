@@ -157,7 +157,7 @@ static int ovl_copy_up_data(struct path *old, struct path *new, loff_t len)
 	}
 
 	/* Try to use clone_file_range to clone up within the same fs */
-	error = vfs_clone_file_range(old_file, 0, new_file, 0, len);
+	error = do_clone_file_range(old_file, 0, new_file, 0, len);
 	if (!error)
 		goto out;
 	/* Couldn't clone, so now we try to copy the data */
@@ -687,7 +687,7 @@ int ovl_copy_up_flags(struct dentry *dentry, int flags)
 		dput(parent);
 		dput(next);
 	}
-	revert_creds(old_cred);
+	ovl_revert_creds(old_cred);
 
 	return err;
 }

@@ -5,6 +5,7 @@
 #include <linux/static_key.h>
 #include <linux/context_tracking.h>
 #include <linux/sched/cputime.h>
+#include <linux/cpufreq_times.h>
 #include "sched.h"
 #include "walt.h"
 
@@ -147,6 +148,9 @@ void account_user_time(struct task_struct *p, u64 cputime)
 
 	/* Account for user time used */
 	acct_account_cputime(p);
+
+	/* Account power usage for user time */
+	cpufreq_acct_update_power(p, cputime);
 }
 
 /*
@@ -191,6 +195,9 @@ void account_system_index_time(struct task_struct *p,
 
 	/* Account for system time used */
 	acct_account_cputime(p);
+
+	/* Account power usage for system time */
+	cpufreq_acct_update_power(p, cputime);
 }
 
 /*
@@ -753,7 +760,7 @@ void vtime_account_system(struct task_struct *tsk)
 
 	write_seqcount_begin(&vtime->seqcount);
 	/* We might have scheduled out from guest path */
-	if (current->flags & PF_VCPU)
+	if (tsk->flags & PF_VCPU)
 		vtime_account_guest(tsk, vtime);
 	else
 		__vtime_account_system(tsk, vtime);
@@ -796,7 +803,7 @@ void vtime_guest_enter(struct task_struct *tsk)
 	 */
 	write_seqcount_begin(&vtime->seqcount);
 	__vtime_account_system(tsk, vtime);
-	current->flags |= PF_VCPU;
+	tsk->flags |= PF_VCPU;
 	write_seqcount_end(&vtime->seqcount);
 }
 EXPORT_SYMBOL_GPL(vtime_guest_enter);
@@ -807,7 +814,7 @@ void vtime_guest_exit(struct task_struct *tsk)
 
 	write_seqcount_begin(&vtime->seqcount);
 	vtime_account_guest(tsk, vtime);
-	current->flags &= ~PF_VCPU;
+	tsk->flags &= ~PF_VCPU;
 	write_seqcount_end(&vtime->seqcount);
 }
 EXPORT_SYMBOL_GPL(vtime_guest_exit);
