@@ -54,6 +54,46 @@ config THREAD_INFO_IN_TASK
 
 menu "General setup"
 
+config ZEN_INTERACTIVE
+	bool "Tune kernel for interactivity"
+	default y
+	help
+	  Tunes the kernel for responsiveness at the cost of throughput and power usage.
+
+	  --- Virtual Memory Subsystem ---------------------------
+
+	    Mem dirty before bg writeback..:  10 %  ->  20 %
+	    Mem dirty before sync writeback:  20 %  ->  50 %
+
+	  --- Block Layer ----------------------------------------
+
+	    Queue depth...............:      128    -> 512
+	    Default MQ scheduler......: mq-deadline -> bfq
+
+	  --- CFS CPU Scheduler ----------------------------------
+
+	    Scheduling latency.............:   6    ->   4    ms
+	    Minimal granularity............:   0.75 ->   0.4  ms
+	    Wakeup granularity.............:   1    ->   0.5  ms
+	    CPU migration cost.............:   0.5  ->   0.25 ms
+	    Bandwidth slice size...........:   5    ->   3    ms
+	    Ondemand sampling down factor..:   1    ->   5
+
+	  --- MuQSS CPU Scheduler --------------------------------
+
+	    Scheduling interval............:   6    ->   4    ms
+	    ISO task max realtime use......:  70 %  ->  25 %
+	    Ondemand sampling down factor..:   1    ->   5
+
+config SCHED_MUQSS
+	bool "MuQSS cpu scheduler"
+	select HIGH_RES_TIMERS
+	default n
+	---help---
+	  The Multiple Queue Skiplist Scheduler for excellent interactivity and
+	  responsiveness on the desktop and highly scalable deterministic
+	  low latency on any hardware.
+
 config BROKEN
 	bool
 
@@ -709,6 +749,7 @@ config NUMA_BALANCING
 	depends on ARCH_SUPPORTS_NUMA_BALANCING
 	depends on !ARCH_WANT_NUMA_VARIABLE_LOCALITY
 	depends on SMP && NUMA && MIGRATION
+	depends on !SCHED_MUQSS
 	help
 	  This option adds support for automatic NUMA aware memory/task placement.
 	  The mechanism is quite primitive and is based on migrating memory when
@@ -816,9 +857,13 @@ menuconfig CGROUP_SCHED
 	help
 	  This feature lets CPU scheduler recognize task groups and control CPU
 	  bandwidth allocation to such task groups. It uses cgroups to group
-	  tasks.
+	  tasks. In combination with MuQSS this is purely a STUB to create the
+	  files associated with the CPU controller cgroup but most of the
+	  controls do nothing. This is useful for working in environments and
+	  with applications that will only work if this control group is
+	  present.
 
-if CGROUP_SCHED
+if CGROUP_SCHED && !SCHED_MUQSS
 config FAIR_GROUP_SCHED
 	bool "Group scheduling for SCHED_OTHER"
 	depends on CGROUP_SCHED
@@ -925,6 +970,7 @@ config CGROUP_DEVICE
 
 config CGROUP_CPUACCT
 	bool "Simple CPU accounting controller"
+	depends on !SCHED_MUQSS
 	help
 	  Provides a simple controller for monitoring the
 	  total CPU consumed by the tasks in a cgroup.
@@ -1011,6 +1057,22 @@ config USER_NS
 
 	  If unsure, say N.
 
+config USER_NS_UNPRIVILEGED
+	bool "Allow unprivileged users to create namespaces"
+	default y
+	depends on USER_NS
+	help
+	  When disabled, unprivileged users will not be able to create
+	  new namespaces. Allowing users to create their own namespaces
+	  has been part of several recent local privilege escalation
+	  exploits, so if you need user namespaces but are
+	  paranoid^Wsecurity-conscious you want to disable this.
+
+	  This setting can be overridden at runtime via the
+	  kernel.unprivileged_userns_clone sysctl.
+
+	  If unsure, say Y.
+
 config PID_NS
 	bool "PID Namespaces"
 	default y
@@ -1043,6 +1105,7 @@ config CHECKPOINT_RESTORE
 
 config SCHED_AUTOGROUP
 	bool "Automatic process group scheduling"
+	depends on !SCHED_MUQSS
 	select CGROUPS
 	select CGROUP_SCHED
 	select FAIR_GROUP_SCHED
@@ -1157,6 +1220,13 @@ config CC_OPTIMIZE_FOR_PERFORMANCE
 	  This is the default optimization level for the kernel, building
 	  with the "-O2" compiler flag for best performance and most
 	  helpful compile-time warnings.
+
+config CC_OPTIMIZE_HARDER
+	bool "Optimize harder"
+	help
+	  This option will pass "-O3" to your compiler resulting in a
+	  larger and faster kernel. The more complex optimizations also
+	  increase compilation time and may affect stability.
 
 config CC_OPTIMIZE_FOR_SIZE
 	bool "Optimize for size"

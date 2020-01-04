@@ -2776,11 +2776,7 @@ static int f2fs_write_end(struct file *file,
 			struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned copied,
 			struct page *page, void *fsdata)
-{
 	struct inode *inode = page->mapping->host;
-
-	trace_android_fs_datawrite_end(inode, pos, len);
-	trace_f2fs_write_end(inode, pos, len, copied);
 
 	/*
 	 * This should be come from len == PAGE_SIZE, and we expect copied
@@ -2999,6 +2995,7 @@ void f2fs_invalidate_page(struct page *page, unsigned int offset,
 
 	clear_cold_data(page);
 
+	/* This is atomic written page, keep Private */
 	if (IS_ATOMIC_WRITTEN_PAGE(page))
 		return f2fs_drop_inmem_page(inode, page);
 
@@ -3046,10 +3043,6 @@ static int f2fs_set_data_page_dirty(struct page *page)
 	if (!PageDirty(page)) {
 		__set_page_dirty_nobuffers(page);
 		f2fs_update_dirty_page(inode, page);
-		return 1;
-	}
-	return 0;
-}
 
 static sector_t f2fs_bmap(struct address_space *mapping, sector_t block)
 {

@@ -273,6 +273,7 @@ next:
 			ClearPageUptodate(page);
 			clear_cold_data(page);
 		}
+
 		f2fs_clear_page_private(page);
 		f2fs_put_page(page, 1);
 
@@ -3397,7 +3398,11 @@ void f2fs_wait_on_block_writeback(struct inode *inode, block_t blkaddr)
 	if (!f2fs_post_read_required(inode))
 		return;
 
+<<<<<<< HEAD
 	if (!__is_valid_data_blkaddr(blkaddr))
+=======
+	if (!is_valid_data_blkaddr(sbi, blkaddr))
+>>>>>>> zen/4.19/master
 		return;
 
 	cpage = find_lock_page(META_MAPPING(sbi), blkaddr);

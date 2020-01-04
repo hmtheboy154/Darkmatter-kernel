@@ -18,6 +18,7 @@
 
 static void chacha_permute(u32 *x, int nrounds)
 {
+
 	int i;
 
 	/* whitelist the allowed round counts */

@@ -155,7 +155,7 @@ static void dapm_assert_locked(struct snd_soc_dapm_context *dapm)
 static void pop_wait(u32 pop_time)
 {
 	if (pop_time)
-		schedule_timeout_uninterruptible(msecs_to_jiffies(pop_time));
+		schedule_msec_hrtimeout_uninterruptible((pop_time));
 }
 
 static void pop_dbg(struct device *dev, u32 pop_time, const char *fmt, ...)
@@ -3514,7 +3514,7 @@ snd_soc_dapm_new_control_unlocked(struct snd_soc_dapm_context *dapm,
 		break;
 	case snd_soc_dapm_pinctrl:
 		w->pinctrl = devm_pinctrl_get(dapm->dev);
-		if (IS_ERR_OR_NULL(w->pinctrl)) {
+		if (IS_ERR(w->pinctrl)) {
 			ret = PTR_ERR(w->pinctrl);
 			if (ret == -EPROBE_DEFER)
 				return ERR_PTR(ret);
@@ -3684,7 +3684,7 @@ static int snd_soc_dai_link_event(struct snd_soc_dapm_widget *w,
 	struct snd_pcm_hw_params *params = NULL;
 	struct snd_pcm_runtime *runtime = NULL;
 	unsigned int fmt;
-	int ret;
+	int ret = 0;
 
 	if (WARN_ON(!config) ||
 	    WARN_ON(list_empty(&w->edges[SND_SOC_DAPM_DIR_OUT]) ||
