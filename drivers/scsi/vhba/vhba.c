@@ -55,6 +55,12 @@ MODULE_LICENSE("GPL");
 #define DPRINTK(fmt, args...)
 #endif
 
+/* scmd_dbg was introduced in 3.15 */
+#ifndef scmd_dbg
+#define scmd_dbg(scmd, fmt, a...)       \
+    dev_dbg(&(scmd)->device->sdev_gendev, fmt, ##a)
+#endif
+
 #define VHBA_MAX_SECTORS_PER_IO 256
 #define VHBA_MAX_BUS 16
 #define VHBA_MAX_ID 16 /* Usually 8 or 16 */
@@ -844,6 +850,13 @@ static long vhba_ctl_ioctl (struct file *file, unsigned int cmd, unsigned long a
             } else {
                 return -ENODEV;
             }
+        }
+        case 0xBEEF002: {
+            int device_number = vdev->num;
+            if (copy_to_user((void *)arg, &device_number, sizeof(device_number))) {
+                return -EFAULT;
+            }
+            return 0;
         }
     }
 
