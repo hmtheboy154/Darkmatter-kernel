@@ -132,8 +132,8 @@ source "drivers/staging/rtl8188fu/Kconfig"
 
 source "drivers/staging/rtl8821ce/Kconfig"
 
-source "drivers/staging/rtl8821au/Kconfig"
+source "drivers/staging/rtl8812au/Kconfig"
 
-source "drivers/staging/rtl8821CU/Kconfig"
+source "drivers/staging/rtl8821cu/Kconfig"
 
 endif # STAGING

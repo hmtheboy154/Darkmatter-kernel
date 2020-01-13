@@ -56,5 +56,5 @@ obj-$(CONFIG_EROFS_FS)		+= erofs/
 obj-$(CONFIG_GSLX680)		+= gslx680/
 obj-$(CONFIG_RTL8821CE)		+= rtl8821ce/
 obj-$(CONFIG_RTL8188FU)		+= rtl8188fu/
-obj-$(CONFIG_RTL8821CU)		+= rtl8821CU/
-obj-$(CONFIG_RTL8821AU)		+= rtl8821au/
+obj-$(CONFIG_RTL8821CU)		+= rtl8821cu/
+obj-$(CONFIG_RTL8821AU)		+= rtl8812au/
