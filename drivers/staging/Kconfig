@@ -128,4 +128,8 @@ source "drivers/staging/erofs/Kconfig"
 
 source "drivers/staging/gslx680/Kconfig"
 
+source "drivers/staging/rtl8188fu/Kconfig"
+
+source "drivers/staging/rtl8821ce/Kconfig"
+
 endif # STAGING
