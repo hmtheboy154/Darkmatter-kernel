@@ -58,4 +58,3 @@ obj-$(CONFIG_RTL8821CE)		+= rtl8821ce/
 obj-$(CONFIG_RTL8188FU)		+= rtl8188fu/
 obj-$(CONFIG_RTL8821CU)		+= rtl8821cu/
 obj-$(CONFIG_RTL8821AU)		+= rtl8812au/
-obj-$(CONFIG_VIDEO_OV5693)	+= ov5693/
