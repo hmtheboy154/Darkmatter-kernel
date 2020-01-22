@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0
-config EXFAT_FS
+config EXFAT_FS_SAMSUNG
 	tristate "exFAT fs support"
 	depends on BLOCK && !EXFAT_FS
 	select NLS
@@ -8,7 +8,7 @@ config EXFAT_FS
 
 config EXFAT_DONT_MOUNT_VFAT
 	bool "Prohibit mounting of fat/vfat filesystems by exFAT"
-	depends on EXFAT_FS
+	depends on EXFAT_FS_SAMSUNG
 	default y
 	help
 	  By default, the exFAT driver will only mount exFAT filesystems, and refuse
@@ -17,34 +17,34 @@ config EXFAT_DONT_MOUNT_VFAT
 
 config EXFAT_DISCARD
 	bool "enable discard support"
-	depends on EXFAT_FS
+	depends on EXFAT_FS_SAMSUNG
 	default y
 
 config EXFAT_DELAYED_SYNC
 	bool "enable delayed sync"
-	depends on EXFAT_FS
+	depends on EXFAT_FS_SAMSUNG
 	default n
 
 config EXFAT_KERNEL_DEBUG
 	bool "enable kernel debug features via ioctl"
-	depends on EXFAT_FS
+	depends on EXFAT_FS_SAMSUNG
 	default n
 
 config EXFAT_DEBUG_MSG
 	bool "print debug messages"
-	depends on EXFAT_FS
+	depends on EXFAT_FS_SAMSUNG
 	default n
 
 config EXFAT_DEFAULT_CODEPAGE
 	int "Default codepage for exFAT"
 	default 437
-	depends on EXFAT_FS
+	depends on EXFAT_FS_SAMSUNG
 	help
 	  This option should be set to the codepage of your exFAT filesystems.
 
 config EXFAT_DEFAULT_IOCHARSET
 	string "Default iocharset for exFAT"
 	default "utf8"
-	depends on EXFAT_FS
+	depends on EXFAT_FS_SAMSUNG
 	help
 	  Set this to the default input/output character set you'd like exFAT to use.

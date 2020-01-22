@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-obj-$(CONFIG_EXFAT_FS) += exfat.o
+obj-$(CONFIG_EXFAT_FS_SAMSUNG) += exfat.o
 
 exfat-y :=	exfat_core.o	\
 		exfat_super.o	\
