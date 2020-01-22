@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 config EXFAT_FS_SAMSUNG
 	tristate "exFAT fs support"
-	depends on BLOCK && !EXFAT_FS
+	depends on BLOCK
 	select NLS
 	help
 	  This adds support for the exFAT file system.
