@@ -84,6 +84,11 @@ config ZEN_INTERACTIVE
 	    Default scheduler.........: mq-deadline -> bfq
 	    Queue depth...............:      128    -> 512
 
+	  --- Virtual Memory Subsystem ---------------------------
+
+	    Mem dirty before bg writeback..:  10 %  ->  20 %
+	    Mem dirty before sync writeback:  20 %  ->  50 %
+
 config BROKEN
 	bool
 
