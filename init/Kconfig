@@ -82,6 +82,7 @@ config ZEN_INTERACTIVE
 	  --- Block Layer ----------------------------------------
 
 	    Default scheduler.........: mq-deadline -> bfq
+	    Queue depth...............:      128    -> 512
 
 config BROKEN
 	bool
