@@ -99,7 +99,11 @@ module_param_cb(compressor, &zswap_compressor_param_ops,
 		&zswap_compressor, 0644);
 
 /* Compressed storage zpool to use */
+#ifdef CONFIG_ZEN_INTERACTIVE
+#define ZSWAP_ZPOOL_DEFAULT "z3fold"
+#else
 #define ZSWAP_ZPOOL_DEFAULT "zbud"
+#endif
 static char *zswap_zpool_type = ZSWAP_ZPOOL_DEFAULT;
 static int zswap_zpool_param_set(const char *, const struct kernel_param *);
 static struct kernel_param_ops zswap_zpool_param_ops = {

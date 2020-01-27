@@ -91,6 +91,7 @@ config ZEN_INTERACTIVE
 	    Compact unevictable pages......:   yes  ->  no
 	    Background-reclaim hugepages...:    no  -> yes
 	    Zswap enabled..................:    no  -> yes
+	    Zswap default pool.............:  zbud  -> z3fold
 
 config BROKEN
 	bool
