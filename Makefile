@@ -2,8 +2,8 @@
 VERSION = 5
 PATCHLEVEL = 5
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Kleptomaniac Octopus
+EXTRAVERSION = -zen
+NAME = Scrolljazz
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
