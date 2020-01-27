@@ -92,6 +92,7 @@ config ZEN_INTERACTIVE
 	    Background-reclaim hugepages...:    no  -> yes
 	    Zswap enabled..................:    no  -> yes
 	    Zswap default pool.............:  zbud  -> z3fold
+	    Zswap default compressor.......:   LZO  -> LZ4
 
 config BROKEN
 	bool
