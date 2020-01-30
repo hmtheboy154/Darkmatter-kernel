@@ -568,6 +568,7 @@ ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_
 
 	return ret;
 }
+EXPORT_SYMBOL(vfs_write);
 
 EXPORT_SYMBOL_GPL(vfs_write);
 

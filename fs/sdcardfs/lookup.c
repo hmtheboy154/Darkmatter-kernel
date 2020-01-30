@@ -384,14 +384,12 @@ put_name:
 
 	lower_path.dentry = lower_dentry;
 	lower_path.mnt = mntget(lower_dir_mnt);
-	sdcardfs_set_lower_path(dentry, &lower_path);
 
 	/*
-	 * If the intent is to create a file, then don't return an error, so
-	 * the VFS will continue the process of making this negative dentry
-	 * into a positive one.
+	 * Check if someone sneakily filled in the dentry when
+	 * we weren't looking. We'll check again in create.
 	 */
-	if (flags & (LOOKUP_CREATE|LOOKUP_RENAME_TARGET))
+	if (unlikely(d_inode_rcu(lower_dentry))) {
 		err = 0;
 
 out:
