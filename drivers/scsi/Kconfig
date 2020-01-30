@@ -1529,4 +1529,6 @@ endif # SCSI_LOWLEVEL
 
 source "drivers/scsi/device_handler/Kconfig"
 
+source "drivers/scsi/vhba/Kconfig"
+
 endmenu
