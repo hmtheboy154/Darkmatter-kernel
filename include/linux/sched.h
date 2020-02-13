@@ -31,6 +31,9 @@
 #include <linux/task_io_accounting.h>
 #include <linux/posix-timers.h>
 #include <linux/rseq.h>
+#ifdef CONFIG_SCHED_MUQSS
+#include <linux/skip_list.h>
+#endif
 
 /* task_struct member predeclarations (sorted alphabetically): */
 struct audit_context;
@@ -221,6 +224,34 @@ extern long schedule_timeout_interruptible(long timeout);
 extern long schedule_timeout_killable(long timeout);
 extern long schedule_timeout_uninterruptible(long timeout);
 extern long schedule_timeout_idle(long timeout);
+
+#if defined(CONFIG_HIGH_RES_TIMERS) && defined(CONFIG_SCHED_MUQSS)
+extern long schedule_msec_hrtimeout(long timeout);
+extern long schedule_min_hrtimeout(void);
+extern long schedule_msec_hrtimeout_interruptible(long timeout);
+extern long schedule_msec_hrtimeout_uninterruptible(long timeout);
+#else
+static inline long schedule_msec_hrtimeout(long timeout)
+{
+	return schedule_timeout(msecs_to_jiffies(timeout));
+}
+
+static inline long schedule_min_hrtimeout(void)
+{
+	return schedule_timeout(1);
+}
+
+static inline long schedule_msec_hrtimeout_interruptible(long timeout)
+{
+	return schedule_timeout_interruptible(msecs_to_jiffies(timeout));
+}
+
+static inline long schedule_msec_hrtimeout_uninterruptible(long timeout)
+{
+	return schedule_timeout_uninterruptible(msecs_to_jiffies(timeout));
+}
+#endif
+
 asmlinkage void schedule(void);
 extern void schedule_preempt_disabled(void);
 asmlinkage void preempt_schedule_irq(void);
@@ -644,9 +675,11 @@ struct task_struct {
 	unsigned int			flags;
 	unsigned int			ptrace;
 
+#if defined(CONFIG_SMP) || defined(CONFIG_SCHED_MUQSS)
+	int on_cpu;
+#endif
 #ifdef CONFIG_SMP
 	struct llist_node		wake_entry;
-	int				on_cpu;
 #ifdef CONFIG_THREAD_INFO_IN_TASK
 	/* Current CPU: */
 	unsigned int			cpu;
@@ -671,10 +704,25 @@ struct task_struct {
 	int				static_prio;
 	int				normal_prio;
 	unsigned int			rt_priority;
+#ifdef CONFIG_SCHED_MUQSS
+	int time_slice;
+	u64 deadline;
+	skiplist_node node; /* Skip list node */
+	u64 last_ran;
+	u64 sched_time; /* sched_clock time spent running */
+#ifdef CONFIG_SMT_NICE
+	int smt_bias; /* Policy/nice level bias across smt siblings */
+#endif
+#ifdef CONFIG_HOTPLUG_CPU
+	bool zerobound; /* Bound to CPU0 for hotplug */
+#endif
+	unsigned long rt_timeout;
+#else /* CONFIG_SCHED_MUQSS */
 
 	const struct sched_class	*sched_class;
 	struct sched_entity		se;
 	struct sched_rt_entity		rt;
+#endif
 #ifdef CONFIG_CGROUP_SCHED
 	struct task_group		*sched_task_group;
 #endif
@@ -839,6 +887,10 @@ struct task_struct {
 #ifdef CONFIG_ARCH_HAS_SCALED_CPUTIME
 	u64				utimescaled;
 	u64				stimescaled;
+#endif
+#ifdef CONFIG_SCHED_MUQSS
+	/* Unbanked cpu time */
+	unsigned long utime_ns, stime_ns;
 #endif
 	u64				gtime;
 	struct prev_cputime		prev_cputime;
@@ -1054,6 +1106,8 @@ struct task_struct {
 #endif
 	struct list_head		pi_state_list;
 	struct futex_pi_state		*pi_state_cache;
+	struct mutex			futex_exit_mutex;
+	unsigned int			futex_state;
 #endif
 #ifdef CONFIG_PERF_EVENTS
 	struct perf_event_context	*perf_event_ctxp[perf_nr_task_contexts];
@@ -1283,6 +1337,40 @@ struct task_struct {
 	 */
 };
 
+#ifdef CONFIG_SCHED_MUQSS
+#define tsk_seruntime(t)		((t)->sched_time)
+#define tsk_rttimeout(t)		((t)->rt_timeout)
+
+static inline void tsk_cpus_current(struct task_struct *p)
+{
+}
+
+void print_scheduler_version(void);
+
+static inline bool iso_task(struct task_struct *p)
+{
+	return (p->policy == SCHED_ISO);
+}
+#else /* CFS */
+#define tsk_seruntime(t)	((t)->se.sum_exec_runtime)
+#define tsk_rttimeout(t)	((t)->rt.timeout)
+
+static inline void tsk_cpus_current(struct task_struct *p)
+{
+	p->nr_cpus_allowed = current->nr_cpus_allowed;
+}
+
+static inline void print_scheduler_version(void)
+{
+	printk(KERN_INFO "CFS CPU scheduler.\n");
+}
+
+static inline bool iso_task(struct task_struct *p)
+{
+	return false;
+}
+#endif /* CONFIG_SCHED_MUQSS */
+
 static inline struct pid *task_pid(struct task_struct *task)
 {
 	return task->thread_pid;
@@ -1442,7 +1530,6 @@ extern struct pid *cad_pid;
  */
 #define PF_IDLE			0x00000002	/* I am an IDLE thread */
 #define PF_EXITING		0x00000004	/* Getting shut down */
-#define PF_EXITPIDONE		0x00000008	/* PI exit done on shut down */
 #define PF_VCPU			0x00000010	/* I'm a virtual CPU */
 #define PF_WQ_WORKER		0x00000020	/* I'm a workqueue worker */
 #define PF_FORKNOEXEC		0x00000040	/* Forked but didn't exec */
@@ -1918,11 +2005,11 @@ static inline void rseq_migrate(struct task_struct *t)
 
 /*
  * If parent process has a registered restartable sequences area, the
- * child inherits. Only applies when forking a process, not a thread.
+ * child inherits. Unregister rseq for a clone with CLONE_VM set.
  */
 static inline void rseq_fork(struct task_struct *t, unsigned long clone_flags)
 {
-	if (clone_flags & CLONE_THREAD) {
+	if (clone_flags & CLONE_VM) {
 		t->rseq = NULL;
 		t->rseq_sig = 0;
 		t->rseq_event_mask = 0;

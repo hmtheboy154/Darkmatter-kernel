@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
 PATCHLEVEL = 4
-SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Kleptomaniac Octopus
+SUBLEVEL = 18
+EXTRAVERSION = -zen
+NAME = Pudding River
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"

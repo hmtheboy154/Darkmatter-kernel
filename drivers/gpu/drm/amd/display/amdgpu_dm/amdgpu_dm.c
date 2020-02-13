@@ -697,6 +697,9 @@ static int amdgpu_dm_init(struct amdgpu_device *adev)
 	if (amdgpu_dc_feature_mask & DC_MULTI_MON_PP_MCLK_SWITCH_MASK)
 		init_data.flags.multi_mon_pp_mclk_switch = true;
 
+	if (amdgpu_dc_feature_mask & DC_DISABLE_FRACTIONAL_PWM_MASK)
+		init_data.flags.disable_fractional_pwm = true;
+
 	init_data.flags.power_down_display_on_boot = true;
 
 #ifdef CONFIG_DRM_AMD_DC_DCN2_0
@@ -945,6 +948,11 @@ static int dm_late_init(void *handle)
 	params.backlight_ramping_reduction = 0xCCCCCCCC;
 	params.backlight_lut_array_size = 16;
 	params.backlight_lut_array = linear_lut;
+
+	/* Min backlight level after ABM reduction,  Don't allow below 1%
+	 * 0xFFFF x 0.01 = 0x28F
+	 */
+	params.min_abm_backlight = 0x28F;
 
 	/* todo will enable for navi10 */
 	if (adev->asic_type <= CHIP_RAVEN) {
@@ -3375,27 +3383,21 @@ get_output_color_space(const struct dc_crtc_timing *dc_crtc_timing)
 	return color_space;
 }
 
-static void reduce_mode_colour_depth(struct dc_crtc_timing *timing_out)
+static bool adjust_colour_depth_from_display_info(
+	struct dc_crtc_timing *timing_out,
+	const struct drm_display_info *info)
 {
-	if (timing_out->display_color_depth <= COLOR_DEPTH_888)
-		return;
-
-	timing_out->display_color_depth--;
-}
-
-static void adjust_colour_depth_from_display_info(struct dc_crtc_timing *timing_out,
-						const struct drm_display_info *info)
-{
+	enum dc_color_depth depth = timing_out->display_color_depth;
 	int normalized_clk;
-	if (timing_out->display_color_depth <= COLOR_DEPTH_888)
-		return;
 	do {
 		normalized_clk = timing_out->pix_clk_100hz / 10;
 		/* YCbCr 4:2:0 requires additional adjustment of 1/2 */
 		if (timing_out->pixel_encoding == PIXEL_ENCODING_YCBCR420)
 			normalized_clk /= 2;
 		/* Adjusting pix clock following on HDMI spec based on colour depth */
-		switch (timing_out->display_color_depth) {
+		switch (depth) {
+		case COLOR_DEPTH_888:
+			break;
 		case COLOR_DEPTH_101010:
 			normalized_clk = (normalized_clk * 30) / 24;
 			break;
@@ -3406,14 +3408,15 @@ static void adjust_colour_depth_from_display_info(struct dc_crtc_timing *timing_
 			normalized_clk = (normalized_clk * 48) / 24;
 			break;
 		default:
-			return;
+			/* The above depths are the only ones valid for HDMI. */
+			return false;
 		}
-		if (normalized_clk <= info->max_tmds_clock)
-			return;
-		reduce_mode_colour_depth(timing_out);
-
-	} while (timing_out->display_color_depth > COLOR_DEPTH_888);
-
+		if (normalized_clk <= info->max_tmds_clock) {
+			timing_out->display_color_depth = depth;
+			return true;
+		}
+	} while (--depth > COLOR_DEPTH_666);
+	return false;
 }
 
 static void fill_stream_properties_from_drm_display_mode(
@@ -3479,8 +3482,14 @@ static void fill_stream_properties_from_drm_display_mode(
 
 	stream->out_transfer_func->type = TF_TYPE_PREDEFINED;
 	stream->out_transfer_func->tf = TRANSFER_FUNCTION_SRGB;
-	if (stream->signal == SIGNAL_TYPE_HDMI_TYPE_A)
-		adjust_colour_depth_from_display_info(timing_out, info);
+	if (stream->signal == SIGNAL_TYPE_HDMI_TYPE_A) {
+		if (!adjust_colour_depth_from_display_info(timing_out, info) &&
+		    drm_mode_is_420_also(info, mode_in) &&
+		    timing_out->pixel_encoding != PIXEL_ENCODING_YCBCR420) {
+			timing_out->pixel_encoding = PIXEL_ENCODING_YCBCR420;
+			adjust_colour_depth_from_display_info(timing_out, info);
+		}
+	}
 }
 
 static void fill_audio_info(struct audio_info *audio_info,
