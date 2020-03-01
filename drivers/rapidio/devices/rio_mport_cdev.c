@@ -964,7 +964,8 @@ rio_dma_transfer(struct file *filp, u32 transfer_mode,
 			   req->sgt.sgl, req->sgt.nents, dir);
 	if (nents == -EFAULT) {
 		rmcd_error("Failed to map SG list");
-		return -EFAULT;
+		ret = -EFAULT;
+		goto err_pg;
 	}
 
 	ret = do_dma_request(req, xfer, sync, nents);
@@ -1742,6 +1743,7 @@ static int rio_mport_add_riodev(struct mport_cdev_priv *priv,
 
 	if (copy_from_user(&dev_info, arg, sizeof(dev_info)))
 		return -EFAULT;
+	dev_info.name[sizeof(dev_info.name) - 1] = '\0';
 
 	rmcd_debug(RDEV, "name:%s ct:0x%x did:0x%x hc:0x%x", dev_info.name,
 		   dev_info.comptag, dev_info.destid, dev_info.hopcount);
@@ -1873,6 +1875,7 @@ static int rio_mport_del_riodev(struct mport_cdev_priv *priv, void __user *arg)
 
 	if (copy_from_user(&dev_info, arg, sizeof(dev_info)))
 		return -EFAULT;
+	dev_info.name[sizeof(dev_info.name) - 1] = '\0';
 
 	mport = priv->md->mport;
 

@@ -223,6 +223,8 @@ static inline bool i915_mmio_reg_valid(i915_reg_t reg)
 #define GEN8_CONFIG0			_MMIO(0xD00)
 #define  GEN9_DEFAULT_FIXES		(1 << 3 | 1 << 2 | 1 << 1)
 
+#define GEN8_RC6_CTX_INFO		_MMIO(0x8504)
+
 #define GAC_ECO_BITS			_MMIO(0x14090)
 #define   ECOBITS_SNB_BIT		(1<<13)
 #define   ECOBITS_PPGTT_CACHE64B	(3<<8)
@@ -295,7 +297,6 @@ static inline bool i915_mmio_reg_valid(i915_reg_t reg)
  * Instruction field definitions used by the command parser
  */
 #define INSTR_CLIENT_SHIFT      29
-#define INSTR_CLIENT_MASK       0xE0000000
 #define   INSTR_MI_CLIENT       0x0
 #define   INSTR_BC_CLIENT       0x2
 #define   INSTR_RC_CLIENT       0x3
@@ -569,6 +570,10 @@ static inline bool i915_mmio_reg_valid(i915_reg_t reg)
  */
 #define BCS_SWCTRL _MMIO(0x22200)
 
+/* There are 16 GPR registers */
+#define BCS_GPR(n)	_MMIO(0x22600 + (n) * 8)
+#define BCS_GPR_UDW(n)	_MMIO(0x22600 + (n) * 8 + 4)
+
 #define GPGPU_THREADS_DISPATCHED        _MMIO(0x2290)
 #define GPGPU_THREADS_DISPATCHED_UDW	_MMIO(0x2290 + 4)
 #define HS_INVOCATION_COUNT             _MMIO(0x2300)
@@ -787,6 +792,9 @@ enum skl_disp_power_wells {
 #define 	CHV_BIAS_CPU_50_SOC_50 (3 << 2)
 
 #define VLV_CZ_CLOCK_TO_MILLI_SEC		100000
+
+#define VLV_RP_UP_EI_THRESHOLD			90
+#define VLV_RP_DOWN_EI_THRESHOLD		70
 
 /* vlv2 north clock has */
 #define CCK_FUSE_REG				0x8
@@ -2132,6 +2140,9 @@ enum skl_disp_power_wells {
 #define I915_USER_INTERRUPT				(1<<1)
 #define I915_ASLE_INTERRUPT				(1<<0)
 #define I915_BSD_USER_INTERRUPT				(1<<25)
+
+#define I915_HDMI_LPE_AUDIO_BASE	(VLV_DISPLAY_BASE + 0x65000)
+#define I915_HDMI_LPE_AUDIO_SIZE	0x1000
 
 #define GEN6_BSD_RNCID			_MMIO(0x12198)
 
@@ -5935,6 +5946,10 @@ enum {
 #define SKL_CSR_DC3_DC5_COUNT	_MMIO(0x80030)
 #define SKL_CSR_DC5_DC6_COUNT	_MMIO(0x8002C)
 #define BXT_CSR_DC3_DC5_COUNT	_MMIO(0x80038)
+
+/* Display Internal Timeout Register */
+#define RM_TIMEOUT		_MMIO(0x42060)
+#define  MMIO_TIMEOUT_US(us)	((us) << 0)
 
 /* interrupts */
 #define DE_MASTER_IRQ_CONTROL   (1 << 31)

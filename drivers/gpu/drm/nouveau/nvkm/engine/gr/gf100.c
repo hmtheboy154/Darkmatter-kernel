@@ -1041,6 +1041,13 @@ gf100_gr_trap_tpc(struct gf100_gr *gr, int gpc, int tpc)
 		stat &= ~0x00000008;
 	}
 
+	if (stat & 0x00000010) {
+		u32 trap = nvkm_rd32(device, TPC_UNIT(gpc, tpc, 0x0430));
+		nvkm_error(subdev, "GPC%d/TPC%d/MPC: %08x\n", gpc, tpc, trap);
+		nvkm_wr32(device, TPC_UNIT(gpc, tpc, 0x0430), 0xc0000000);
+		stat &= ~0x00000010;
+	}
+
 	if (stat) {
 		nvkm_error(subdev, "GPC%d/TPC%d/%08x: unknown\n", gpc, tpc, stat);
 	}
@@ -1129,7 +1136,7 @@ gf100_gr_trap_intr(struct gf100_gr *gr)
 	if (trap & 0x00000008) {
 		u32 stat = nvkm_rd32(device, 0x408030);
 
-		nvkm_snprintbf(error, sizeof(error), gf100_m2mf_error,
+		nvkm_snprintbf(error, sizeof(error), gf100_ccache_error,
 			       stat & 0x3fffffff);
 		nvkm_error(subdev, "CCACHE %08x [%s]\n", stat, error);
 		nvkm_wr32(device, 0x408030, 0xc0000000);
@@ -1258,7 +1265,7 @@ gf100_gr_ctxctl_isr(struct gf100_gr *gr)
 	struct nvkm_device *device = subdev->device;
 	u32 stat = nvkm_rd32(device, 0x409c18);
 
-	if (stat & 0x00000001) {
+	if (!gr->firmware && (stat & 0x00000001)) {
 		u32 code = nvkm_rd32(device, 0x409814);
 		if (code == E_BAD_FWMTHD) {
 			u32 class = nvkm_rd32(device, 0x409808);
@@ -1270,15 +1277,14 @@ gf100_gr_ctxctl_isr(struct gf100_gr *gr)
 			nvkm_error(subdev, "FECS MTHD subc %d class %04x "
 					   "mthd %04x data %08x\n",
 				   subc, class, mthd, data);
-
-			nvkm_wr32(device, 0x409c20, 0x00000001);
-			stat &= ~0x00000001;
 		} else {
 			nvkm_error(subdev, "FECS ucode error %d\n", code);
 		}
+		nvkm_wr32(device, 0x409c20, 0x00000001);
+		stat &= ~0x00000001;
 	}
 
-	if (stat & 0x00080000) {
+	if (!gr->firmware && (stat & 0x00080000)) {
 		nvkm_error(subdev, "FECS watchdog timeout\n");
 		gf100_gr_ctxctl_debug(gr);
 		nvkm_wr32(device, 0x409c20, 0x00080000);
@@ -1384,7 +1390,7 @@ gf100_gr_intr(struct nvkm_gr *base)
 	nvkm_fifo_chan_put(device->fifo, flags, &chan);
 }
 
-void
+static void
 gf100_gr_init_fw(struct gf100_gr *gr, u32 fuc_base,
 		 struct gf100_gr_fuc *code, struct gf100_gr_fuc *data)
 {
@@ -1701,7 +1707,7 @@ gf100_gr_oneinit(struct nvkm_gr *base)
 	return 0;
 }
 
-int
+static int
 gf100_gr_init_(struct nvkm_gr *base)
 {
 	struct gf100_gr *gr = gf100_gr(base);

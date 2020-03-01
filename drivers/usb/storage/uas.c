@@ -800,20 +800,9 @@ static int uas_slave_alloc(struct scsi_device *sdev)
 	sdev->hostdata = devinfo;
 
 	/*
-	 * USB has unusual DMA-alignment requirements: Although the
-	 * starting address of each scatter-gather element doesn't matter,
-	 * the length of each element except the last must be divisible
-	 * by the Bulk maxpacket value.  There's currently no way to
-	 * express this by block-layer constraints, so we'll cop out
-	 * and simply require addresses to be aligned at 512-byte
-	 * boundaries.  This is okay since most block I/O involves
-	 * hardware sectors that are multiples of 512 bytes in length,
-	 * and since host controllers up through USB 2.0 have maxpacket
-	 * values no larger than 512.
-	 *
-	 * But it doesn't suffice for Wireless USB, where Bulk maxpacket
-	 * values can be as large as 2048.  To make that work properly
-	 * will require changes to the block layer.
+	 * The protocol has no requirements on alignment in the strict sense.
+	 * Controllers may or may not have alignment restrictions.
+	 * As this is not exported, we use an extremely conservative guess.
 	 */
 	blk_queue_update_dma_alignment(sdev->request_queue, (512 - 1));
 
@@ -835,6 +824,43 @@ static int uas_slave_configure(struct scsi_device *sdev)
 	/* A few buggy USB-ATA bridges don't understand FUA */
 	if (devinfo->flags & US_FL_BROKEN_FUA)
 		sdev->broken_fua = 1;
+
+	/* UAS also needs to support FL_ALWAYS_SYNC */
+	if (devinfo->flags & US_FL_ALWAYS_SYNC) {
+		sdev->skip_ms_page_3f = 1;
+		sdev->skip_ms_page_8 = 1;
+		sdev->wce_default_on = 1;
+	}
+
+	/* Some disks cannot handle READ_CAPACITY_16 */
+	if (devinfo->flags & US_FL_NO_READ_CAPACITY_16)
+		sdev->no_read_capacity_16 = 1;
+
+	/*
+	 * Some disks return the total number of blocks in response
+	 * to READ CAPACITY rather than the highest block number.
+	 * If this device makes that mistake, tell the sd driver.
+	 */
+	if (devinfo->flags & US_FL_FIX_CAPACITY)
+		sdev->fix_capacity = 1;
+
+	/*
+	 * in some cases we have to guess
+	 */
+	if (devinfo->flags & US_FL_CAPACITY_HEURISTICS)
+		sdev->guess_capacity = 1;
+
+	/*
+	 * Some devices don't like MODE SENSE with page=0x3f,
+	 * which is the command used for checking if a device
+	 * is write-protected.  Now that we tell the sd driver
+	 * to do a 192-byte transfer with this command the
+	 * majority of devices work fine, but a few still can't
+	 * handle it.  The sd driver will simply assume those
+	 * devices are write-enabled.
+	 */
+	if (devinfo->flags & US_FL_NO_WP_DETECT)
+		sdev->skip_ms_page_3f = 1;
 
 	scsi_change_queue_depth(sdev, devinfo->qdepth - 2);
 	return 0;
@@ -873,14 +899,14 @@ MODULE_DEVICE_TABLE(usb, uas_usb_ids);
 static int uas_switch_interface(struct usb_device *udev,
 				struct usb_interface *intf)
 {
-	int alt;
+	struct usb_host_interface *alt;
 
 	alt = uas_find_uas_alt_setting(intf);
-	if (alt < 0)
-		return alt;
+	if (!alt)
+		return -ENODEV;
 
-	return usb_set_interface(udev,
-			intf->altsetting[0].desc.bInterfaceNumber, alt);
+	return usb_set_interface(udev, alt->desc.bInterfaceNumber,
+			alt->desc.bAlternateSetting);
 }
 
 static int uas_configure_endpoints(struct uas_dev_info *devinfo)
@@ -1076,20 +1102,19 @@ static int uas_post_reset(struct usb_interface *intf)
 		return 0;
 
 	err = uas_configure_endpoints(devinfo);
-	if (err) {
+	if (err && err != -ENODEV)
 		shost_printk(KERN_ERR, shost,
 			     "%s: alloc streams error %d after reset",
 			     __func__, err);
-		return 1;
-	}
 
+	/* we must unblock the host in every case lest we deadlock */
 	spin_lock_irqsave(shost->host_lock, flags);
 	scsi_report_bus_reset(shost, 0);
 	spin_unlock_irqrestore(shost->host_lock, flags);
 
 	scsi_unblock_requests(shost);
 
-	return 0;
+	return err ? 1 : 0;
 }
 
 static int uas_suspend(struct usb_interface *intf, pm_message_t message)

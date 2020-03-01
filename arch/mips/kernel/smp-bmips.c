@@ -166,11 +166,11 @@ static void bmips_prepare_cpus(unsigned int max_cpus)
 		return;
 	}
 
-	if (request_irq(IPI0_IRQ, bmips_ipi_interrupt, IRQF_PERCPU,
-			"smp_ipi0", NULL))
+	if (request_irq(IPI0_IRQ, bmips_ipi_interrupt,
+			IRQF_PERCPU | IRQF_NO_SUSPEND, "smp_ipi0", NULL))
 		panic("Can't request IPI0 interrupt");
-	if (request_irq(IPI1_IRQ, bmips_ipi_interrupt, IRQF_PERCPU,
-			"smp_ipi1", NULL))
+	if (request_irq(IPI1_IRQ, bmips_ipi_interrupt,
+			IRQF_PERCPU | IRQF_NO_SUSPEND, "smp_ipi1", NULL))
 		panic("Can't request IPI1 interrupt");
 }
 
@@ -453,10 +453,10 @@ static void bmips_wr_vec(unsigned long dst, char *start, char *end)
 
 static inline void bmips_nmi_handler_setup(void)
 {
-	bmips_wr_vec(BMIPS_NMI_RESET_VEC, &bmips_reset_nmi_vec,
-		&bmips_reset_nmi_vec_end);
-	bmips_wr_vec(BMIPS_WARM_RESTART_VEC, &bmips_smp_int_vec,
-		&bmips_smp_int_vec_end);
+	bmips_wr_vec(BMIPS_NMI_RESET_VEC, bmips_reset_nmi_vec,
+		bmips_reset_nmi_vec_end);
+	bmips_wr_vec(BMIPS_WARM_RESTART_VEC, bmips_smp_int_vec,
+		bmips_smp_int_vec_end);
 }
 
 struct reset_vec_info {
@@ -587,11 +587,11 @@ void __init bmips_cpu_setup(void)
 
 		/* Flush and enable RAC */
 		cfg = __raw_readl(cbr + BMIPS_RAC_CONFIG);
-		__raw_writel(cfg | 0x100, BMIPS_RAC_CONFIG);
+		__raw_writel(cfg | 0x100, cbr + BMIPS_RAC_CONFIG);
 		__raw_readl(cbr + BMIPS_RAC_CONFIG);
 
 		cfg = __raw_readl(cbr + BMIPS_RAC_CONFIG);
-		__raw_writel(cfg | 0xf, BMIPS_RAC_CONFIG);
+		__raw_writel(cfg | 0xf, cbr + BMIPS_RAC_CONFIG);
 		__raw_readl(cbr + BMIPS_RAC_CONFIG);
 
 		cfg = __raw_readl(cbr + BMIPS_RAC_ADDRESS_RANGE);

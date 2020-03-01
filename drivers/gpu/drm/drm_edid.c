@@ -107,6 +107,18 @@ static const struct edid_quirk {
 	/* AEO model 0 reports 8 bpc, but is a 6 bpc panel */
 	{ "AEO", 0, EDID_QUIRK_FORCE_6BPC },
 
+	/* BOE model on HP Pavilion 15-n233sl reports 8 bpc, but is a 6 bpc panel */
+	{ "BOE", 0x78b, EDID_QUIRK_FORCE_6BPC },
+
+	/* CPT panel of Asus UX303LA reports 8 bpc, but is a 6 bpc panel */
+	{ "CPT", 0x17df, EDID_QUIRK_FORCE_6BPC },
+
+	/* SDC panel of Lenovo B50-80 reports 8 bpc, but is a 6 bpc panel */
+	{ "SDC", 0x3652, EDID_QUIRK_FORCE_6BPC },
+
+	/* BOE model 0x0771 reports 8 bpc, but is a 6 bpc panel */
+	{ "BOE", 0x0771, EDID_QUIRK_FORCE_6BPC },
+
 	/* Belinea 10 15 55 */
 	{ "MAX", 1516, EDID_QUIRK_PREFER_LARGE_60 },
 	{ "MAX", 0x77e, EDID_QUIRK_PREFER_LARGE_60 },
@@ -147,6 +159,9 @@ static const struct edid_quirk {
 
 	/* Medion MD 30217 PG */
 	{ "MED", 0x7b8, EDID_QUIRK_PREFER_LARGE_75 },
+
+	/* Lenovo G50 */
+	{ "SDC", 18514, EDID_QUIRK_FORCE_6BPC },
 
 	/* Panel in Samsung NP700G7A-S01PL notebook reports 6bpc */
 	{ "SEC", 0xd033, EDID_QUIRK_FORCE_8BPC },
@@ -1290,20 +1305,20 @@ struct edid *drm_do_get_edid(struct drm_connector *connector,
 	void *data)
 {
 	int i, j = 0, valid_extensions = 0;
-	u8 *block, *new;
+	u8 *edid, *new;
 	bool print_bad_edid = !connector->bad_edid_counter || (drm_debug & DRM_UT_KMS);
 
-	if ((block = kmalloc(EDID_LENGTH, GFP_KERNEL)) == NULL)
+	if ((edid = kmalloc(EDID_LENGTH, GFP_KERNEL)) == NULL)
 		return NULL;
 
 	/* base block fetch */
 	for (i = 0; i < 4; i++) {
-		if (get_edid_block(data, block, 0, EDID_LENGTH))
+		if (get_edid_block(data, edid, 0, EDID_LENGTH))
 			goto out;
-		if (drm_edid_block_valid(block, 0, print_bad_edid,
+		if (drm_edid_block_valid(edid, 0, print_bad_edid,
 					 &connector->edid_corrupt))
 			break;
-		if (i == 0 && drm_edid_is_zero(block, EDID_LENGTH)) {
+		if (i == 0 && drm_edid_is_zero(edid, EDID_LENGTH)) {
 			connector->null_edid_counter++;
 			goto carp;
 		}
@@ -1312,24 +1327,22 @@ struct edid *drm_do_get_edid(struct drm_connector *connector,
 		goto carp;
 
 	/* if there's no extensions, we're done */
-	if (block[0x7e] == 0)
-		return (struct edid *)block;
+	if (edid[0x7e] == 0)
+		return (struct edid *)edid;
 
-	new = krealloc(block, (block[0x7e] + 1) * EDID_LENGTH, GFP_KERNEL);
+	new = krealloc(edid, (edid[0x7e] + 1) * EDID_LENGTH, GFP_KERNEL);
 	if (!new)
 		goto out;
-	block = new;
+	edid = new;
 
-	for (j = 1; j <= block[0x7e]; j++) {
+	for (j = 1; j <= edid[0x7e]; j++) {
+		u8 *block = edid + (valid_extensions + 1) * EDID_LENGTH;
+
 		for (i = 0; i < 4; i++) {
-			if (get_edid_block(data,
-				  block + (valid_extensions + 1) * EDID_LENGTH,
-				  j, EDID_LENGTH))
+			if (get_edid_block(data, block, j, EDID_LENGTH))
 				goto out;
-			if (drm_edid_block_valid(block + (valid_extensions + 1)
-						 * EDID_LENGTH, j,
-						 print_bad_edid,
-						 NULL)) {
+			if (drm_edid_block_valid(block, j,
+						 print_bad_edid, NULL)) {
 				valid_extensions++;
 				break;
 			}
@@ -1344,16 +1357,16 @@ struct edid *drm_do_get_edid(struct drm_connector *connector,
 		}
 	}
 
-	if (valid_extensions != block[0x7e]) {
-		block[EDID_LENGTH-1] += block[0x7e] - valid_extensions;
-		block[0x7e] = valid_extensions;
-		new = krealloc(block, (valid_extensions + 1) * EDID_LENGTH, GFP_KERNEL);
+	if (valid_extensions != edid[0x7e]) {
+		edid[EDID_LENGTH-1] += edid[0x7e] - valid_extensions;
+		edid[0x7e] = valid_extensions;
+		new = krealloc(edid, (valid_extensions + 1) * EDID_LENGTH, GFP_KERNEL);
 		if (!new)
 			goto out;
-		block = new;
+		edid = new;
 	}
 
-	return (struct edid *)block;
+	return (struct edid *)edid;
 
 carp:
 	if (print_bad_edid) {
@@ -1363,7 +1376,7 @@ carp:
 	connector->bad_edid_counter++;
 
 out:
-	kfree(block);
+	kfree(edid);
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(drm_do_get_edid);
@@ -3344,8 +3357,7 @@ EXPORT_SYMBOL(drm_edid_get_monitor_name);
  * @edid: EDID to parse
  *
  * Fill the ELD (EDID-Like Data) buffer for passing to the audio driver. The
- * Conn_Type, HDCP and Port_ID ELD fields are left for the graphics driver to
- * fill in.
+ * HDCP and Port_ID ELD fields are left for the graphics driver to fill in.
  */
 void drm_edid_to_eld(struct drm_connector *connector, struct edid *edid)
 {
@@ -3422,6 +3434,12 @@ void drm_edid_to_eld(struct drm_connector *connector, struct edid *edid)
 		}
 	}
 	eld[5] |= total_sad_count << 4;
+
+	if (connector->connector_type == DRM_MODE_CONNECTOR_DisplayPort ||
+	    connector->connector_type == DRM_MODE_CONNECTOR_eDP)
+		eld[DRM_ELD_SAD_COUNT_CONN_TYPE] |= DRM_ELD_CONN_TYPE_DP;
+	else
+		eld[DRM_ELD_SAD_COUNT_CONN_TYPE] |= DRM_ELD_CONN_TYPE_HDMI;
 
 	eld[DRM_ELD_BASELINE_ELD_LEN] =
 		DIV_ROUND_UP(drm_eld_calc_baseline_block_size(eld), 4);

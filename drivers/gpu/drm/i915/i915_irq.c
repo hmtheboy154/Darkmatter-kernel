@@ -1684,10 +1684,38 @@ static void valleyview_pipestat_irq_handler(struct drm_i915_private *dev_priv,
 
 static u32 i9xx_hpd_irq_ack(struct drm_i915_private *dev_priv)
 {
-	u32 hotplug_status = I915_READ(PORT_HOTPLUG_STAT);
+	u32 hotplug_status = 0, hotplug_status_mask;
+	int i;
 
-	if (hotplug_status)
+	if (IS_G4X(dev_priv) ||
+	    IS_VALLEYVIEW(dev_priv) || IS_CHERRYVIEW(dev_priv))
+		hotplug_status_mask = HOTPLUG_INT_STATUS_G4X |
+			DP_AUX_CHANNEL_MASK_INT_STATUS_G4X;
+	else
+		hotplug_status_mask = HOTPLUG_INT_STATUS_I915;
+
+	/*
+	 * We absolutely have to clear all the pending interrupt
+	 * bits in PORT_HOTPLUG_STAT. Otherwise the ISR port
+	 * interrupt bit won't have an edge, and the i965/g4x
+	 * edge triggered IIR will not notice that an interrupt
+	 * is still pending. We can't use PORT_HOTPLUG_EN to
+	 * guarantee the edge as the act of toggling the enable
+	 * bits can itself generate a new hotplug interrupt :(
+	 */
+	for (i = 0; i < 10; i++) {
+		u32 tmp = I915_READ(PORT_HOTPLUG_STAT) & hotplug_status_mask;
+
+		if (tmp == 0)
+			return hotplug_status;
+
+		hotplug_status |= tmp;
 		I915_WRITE(PORT_HOTPLUG_STAT, hotplug_status);
+	}
+
+	WARN_ONCE(1,
+		  "PORT_HOTPLUG_STAT did not clear (0x%08x)\n",
+		  I915_READ(PORT_HOTPLUG_STAT));
 
 	return hotplug_status;
 }
@@ -1780,6 +1808,14 @@ static irqreturn_t valleyview_irq_handler(int irq, void *arg)
 		valleyview_pipestat_irq_ack(dev_priv, iir, pipe_stats);
 
 		/*
+		 * LPE audio interrupts are only enabled on Baytrail and
+		 * CherryView platforms without HDaudio
+		 */
+		if (iir & (I915_LPE_PIPE_A_INTERRUPT |
+			   I915_LPE_PIPE_B_INTERRUPT))
+			intel_lpe_audio_irq_handler(dev_priv);
+
+		/*
 		 * VLV_IIR is single buffered, and reflects the level
 		 * from PIPESTAT/PORT_HOTPLUG_STAT, hence clear it last.
 		 */
@@ -1858,6 +1894,15 @@ static irqreturn_t cherryview_irq_handler(int irq, void *arg)
 		/* Call regardless, as some status bits might not be
 		 * signalled in iir */
 		valleyview_pipestat_irq_ack(dev_priv, iir, pipe_stats);
+
+		/*
+		 * LPE audio interrupts are only enabled on Baytrail and
+		 * CherryView platforms without HDaudio
+		 */
+		if (iir & (I915_LPE_PIPE_A_INTERRUPT |
+			   I915_LPE_PIPE_B_INTERRUPT |
+			   I915_LPE_PIPE_C_INTERRUPT))
+			intel_lpe_audio_irq_handler(dev_priv);
 
 		/*
 		 * VLV_IIR is single buffered, and reflects the level
@@ -1957,10 +2002,10 @@ static void ibx_irq_handler(struct drm_i915_private *dev_priv, u32 pch_iir)
 		DRM_DEBUG_DRIVER("PCH transcoder CRC error interrupt\n");
 
 	if (pch_iir & SDE_TRANSA_FIFO_UNDER)
-		intel_pch_fifo_underrun_irq_handler(dev_priv, TRANSCODER_A);
+		intel_pch_fifo_underrun_irq_handler(dev_priv, PIPE_A);
 
 	if (pch_iir & SDE_TRANSB_FIFO_UNDER)
-		intel_pch_fifo_underrun_irq_handler(dev_priv, TRANSCODER_B);
+		intel_pch_fifo_underrun_irq_handler(dev_priv, PIPE_B);
 }
 
 static void ivb_err_int_handler(struct drm_i915_private *dev_priv)
@@ -1994,13 +2039,13 @@ static void cpt_serr_int_handler(struct drm_i915_private *dev_priv)
 		DRM_ERROR("PCH poison interrupt\n");
 
 	if (serr_int & SERR_INT_TRANS_A_FIFO_UNDERRUN)
-		intel_pch_fifo_underrun_irq_handler(dev_priv, TRANSCODER_A);
+		intel_pch_fifo_underrun_irq_handler(dev_priv, PIPE_A);
 
 	if (serr_int & SERR_INT_TRANS_B_FIFO_UNDERRUN)
-		intel_pch_fifo_underrun_irq_handler(dev_priv, TRANSCODER_B);
+		intel_pch_fifo_underrun_irq_handler(dev_priv, PIPE_B);
 
 	if (serr_int & SERR_INT_TRANS_C_FIFO_UNDERRUN)
-		intel_pch_fifo_underrun_irq_handler(dev_priv, TRANSCODER_C);
+		intel_pch_fifo_underrun_irq_handler(dev_priv, PIPE_C);
 
 	I915_WRITE(SERR_INT, serr_int);
 }
@@ -3246,6 +3291,7 @@ static void vlv_display_irq_postinstall(struct drm_i915_private *dev_priv)
 	u32 pipestat_mask;
 	u32 enable_mask;
 	enum pipe pipe;
+	u32 val;
 
 	pipestat_mask = PLANE_FLIP_DONE_INT_STATUS_VLV |
 			PIPE_CRC_DONE_INTERRUPT_STATUS;
@@ -3261,6 +3307,15 @@ static void vlv_display_irq_postinstall(struct drm_i915_private *dev_priv)
 		enable_mask |= I915_DISPLAY_PIPE_C_EVENT_INTERRUPT;
 
 	WARN_ON(dev_priv->irq_mask != ~0);
+
+	/* add interrupt masks unconditially here, the actual unmask
+	 * will take place only if the LPE_AUDIO mode is detected
+	 */
+	val = (I915_LPE_PIPE_A_INTERRUPT |
+		I915_LPE_PIPE_B_INTERRUPT |
+		I915_LPE_PIPE_C_INTERRUPT);
+
+	enable_mask |= val;
 
 	dev_priv->irq_mask = ~enable_mask;
 

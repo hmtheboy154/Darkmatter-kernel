@@ -27,7 +27,6 @@
 
 #include "vmwgfx_kms.h"
 
-
 /* Might need a hrtimer here? */
 #define VMWGFX_PRESENT_RATE ((HZ / 60 > 0) ? HZ / 60 : 1)
 
@@ -980,14 +979,22 @@ static struct drm_framebuffer *vmw_kms_fb_create(struct drm_device *dev,
 	struct vmw_dma_buffer *bo = NULL;
 	struct ttm_base_object *user_obj;
 	struct drm_mode_fb_cmd mode_cmd;
+	const struct drm_format_info *info;
 	int ret;
+
+	info = drm_format_info(mode_cmd2->pixel_format);
+	if (!info || !info->depth) {
+		DRM_ERROR("Unsupported framebuffer format %s\n",
+			  drm_get_format_name(mode_cmd2->pixel_format));
+		return ERR_PTR(-EINVAL);
+	}
 
 	mode_cmd.width = mode_cmd2->width;
 	mode_cmd.height = mode_cmd2->height;
 	mode_cmd.pitch = mode_cmd2->pitches[0];
 	mode_cmd.handle = mode_cmd2->handles[0];
-	drm_fb_get_bpp_depth(mode_cmd2->pixel_format, &mode_cmd.depth,
-				    &mode_cmd.bpp);
+	mode_cmd.depth = info->depth;
+	mode_cmd.bpp = info->cpp[0] * 8;
 
 	/**
 	 * This code should be conditioned on Screen Objects not being used.
@@ -1933,9 +1940,12 @@ void vmw_kms_helper_buffer_finish(struct vmw_private *dev_priv,
  * Helper to be used if an error forces the caller to undo the actions of
  * vmw_kms_helper_resource_prepare.
  */
-void vmw_kms_helper_resource_revert(struct vmw_resource *res)
+void vmw_kms_helper_resource_revert(struct vmw_validation_ctx *ctx)
 {
-	vmw_kms_helper_buffer_revert(res->backup);
+	struct vmw_resource *res = ctx->res;
+
+	vmw_kms_helper_buffer_revert(ctx->buf);
+	vmw_dmabuf_unreference(&ctx->buf);
 	vmw_resource_unreserve(res, false, NULL, 0);
 	mutex_unlock(&res->dev_priv->cmdbuf_mutex);
 }
@@ -1952,9 +1962,13 @@ void vmw_kms_helper_resource_revert(struct vmw_resource *res)
  * interrupted by a signal.
  */
 int vmw_kms_helper_resource_prepare(struct vmw_resource *res,
-				    bool interruptible)
+				    bool interruptible,
+				    struct vmw_validation_ctx *ctx)
 {
 	int ret = 0;
+
+	ctx->buf = NULL;
+	ctx->res = res;
 
 	if (interruptible)
 		ret = mutex_lock_interruptible(&res->dev_priv->cmdbuf_mutex);
@@ -1974,6 +1988,8 @@ int vmw_kms_helper_resource_prepare(struct vmw_resource *res,
 						    res->dev_priv->has_mob);
 		if (ret)
 			goto out_unreserve;
+
+		ctx->buf = vmw_dmabuf_reference(res->backup);
 	}
 	ret = vmw_resource_validate(res);
 	if (ret)
@@ -1981,7 +1997,7 @@ int vmw_kms_helper_resource_prepare(struct vmw_resource *res,
 	return 0;
 
 out_revert:
-	vmw_kms_helper_buffer_revert(res->backup);
+	vmw_kms_helper_buffer_revert(ctx->buf);
 out_unreserve:
 	vmw_resource_unreserve(res, false, NULL, 0);
 out_unlock:
@@ -1997,13 +2013,16 @@ out_unlock:
  * @out_fence: Optional pointer to a fence pointer. If non-NULL, a
  * ref-counted fence pointer is returned here.
  */
-void vmw_kms_helper_resource_finish(struct vmw_resource *res,
-			     struct vmw_fence_obj **out_fence)
+void vmw_kms_helper_resource_finish(struct vmw_validation_ctx *ctx,
+				    struct vmw_fence_obj **out_fence)
 {
-	if (res->backup || out_fence)
-		vmw_kms_helper_buffer_finish(res->dev_priv, NULL, res->backup,
+	struct vmw_resource *res = ctx->res;
+
+	if (ctx->buf || out_fence)
+		vmw_kms_helper_buffer_finish(res->dev_priv, NULL, ctx->buf,
 					     out_fence, NULL);
 
+	vmw_dmabuf_unreference(&ctx->buf);
 	vmw_resource_unreserve(res, false, NULL, 0);
 	mutex_unlock(&res->dev_priv->cmdbuf_mutex);
 }

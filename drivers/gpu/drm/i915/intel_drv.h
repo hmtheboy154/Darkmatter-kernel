@@ -1095,12 +1095,12 @@ static inline unsigned int intel_num_planes(struct intel_crtc *crtc)
 bool intel_set_cpu_fifo_underrun_reporting(struct drm_i915_private *dev_priv,
 					   enum pipe pipe, bool enable);
 bool intel_set_pch_fifo_underrun_reporting(struct drm_i915_private *dev_priv,
-					   enum transcoder pch_transcoder,
+					   enum pipe pch_transcoder,
 					   bool enable);
 void intel_cpu_fifo_underrun_irq_handler(struct drm_i915_private *dev_priv,
 					 enum pipe pipe);
 void intel_pch_fifo_underrun_irq_handler(struct drm_i915_private *dev_priv,
-					 enum transcoder pch_transcoder);
+					 enum pipe pch_transcoder);
 void intel_check_cpu_fifo_underruns(struct drm_i915_private *dev_priv);
 void intel_check_pch_fifo_underruns(struct drm_i915_private *dev_priv);
 
@@ -1284,15 +1284,6 @@ int intel_plane_atomic_calc_changes(struct drm_crtc_state *crtc_state,
 
 unsigned int intel_tile_height(const struct drm_i915_private *dev_priv,
 			       uint64_t fb_modifier, unsigned int cpp);
-
-static inline bool
-intel_rotation_90_or_270(unsigned int rotation)
-{
-	return rotation & (DRM_ROTATE_90 | DRM_ROTATE_270);
-}
-
-void intel_create_rotation_property(struct drm_device *dev,
-					struct intel_plane *plane);
 
 void assert_pch_transcoder_disabled(struct drm_i915_private *dev_priv,
 				    enum pipe pipe);
@@ -1581,7 +1572,7 @@ extern struct drm_display_mode *intel_find_panel_downclock(
 int intel_backlight_device_register(struct intel_connector *connector);
 void intel_backlight_device_unregister(struct intel_connector *connector);
 #else /* CONFIG_BACKLIGHT_CLASS_DEVICE */
-static int intel_backlight_device_register(struct intel_connector *connector)
+static inline int intel_backlight_device_register(struct intel_connector *connector)
 {
 	return 0;
 }
@@ -1730,6 +1721,9 @@ void intel_enable_gt_powersave(struct drm_i915_private *dev_priv);
 void intel_autoenable_gt_powersave(struct drm_i915_private *dev_priv);
 void intel_disable_gt_powersave(struct drm_i915_private *dev_priv);
 void intel_suspend_gt_powersave(struct drm_i915_private *dev_priv);
+bool i915_rc6_ctx_wa_check(struct drm_i915_private *i915);
+void i915_rc6_ctx_wa_suspend(struct drm_i915_private *i915);
+void i915_rc6_ctx_wa_resume(struct drm_i915_private *i915);
 void gen6_rps_busy(struct drm_i915_private *dev_priv);
 void gen6_rps_reset_ei(struct drm_i915_private *dev_priv);
 void gen6_rps_idle(struct drm_i915_private *dev_priv);

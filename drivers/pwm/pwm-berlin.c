@@ -78,7 +78,6 @@ static void berlin_pwm_free(struct pwm_chip *chip, struct pwm_device *pwm)
 {
 	struct berlin_pwm_channel *channel = pwm_get_chip_data(pwm);
 
-	pwm_set_chip_data(pwm, NULL);
 	kfree(channel);
 }
 
@@ -206,7 +205,6 @@ static int berlin_pwm_probe(struct platform_device *pdev)
 	pwm->chip.ops = &berlin_pwm_ops;
 	pwm->chip.base = -1;
 	pwm->chip.npwm = 4;
-	pwm->chip.can_sleep = true;
 	pwm->chip.of_xlate = of_pwm_xlate_with_flags;
 	pwm->chip.of_pwm_n_cells = 3;
 

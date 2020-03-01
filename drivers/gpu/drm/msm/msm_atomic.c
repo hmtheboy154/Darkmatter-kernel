@@ -98,7 +98,12 @@ static void msm_atomic_wait_for_commit_done(struct drm_device *dev,
 		if (old_state->legacy_cursor_update)
 			continue;
 
+		if (drm_crtc_vblank_get(crtc))
+			continue;
+
 		kms->funcs->wait_for_crtc_commit_done(kms, crtc);
+
+		drm_crtc_vblank_put(crtc);
 	}
 }
 
@@ -141,7 +146,7 @@ static void complete_commit(struct msm_commit *c, bool async)
 
 	kms->funcs->complete_commit(kms, state);
 
-	drm_atomic_state_free(state);
+	drm_atomic_state_put(state);
 
 	commit_destroy(c);
 }
@@ -256,6 +261,7 @@ int msm_atomic_commit(struct drm_device *dev,
 	 * current layout.
 	 */
 
+	drm_atomic_state_get(state);
 	if (nonblock) {
 		queue_work(priv->atomic_wq, &c->work);
 		return 0;

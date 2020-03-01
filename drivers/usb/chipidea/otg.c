@@ -134,9 +134,9 @@ void ci_handle_vbus_change(struct ci_hdrc *ci)
 	if (!ci->is_otg)
 		return;
 
-	if (hw_read_otgsc(ci, OTGSC_BSV))
+	if (hw_read_otgsc(ci, OTGSC_BSV) && !ci->vbus_active)
 		usb_gadget_vbus_connect(&ci->gadget);
-	else
+	else if (!hw_read_otgsc(ci, OTGSC_BSV) && ci->vbus_active)
 		usb_gadget_vbus_disconnect(&ci->gadget);
 }
 
@@ -175,14 +175,21 @@ static void ci_handle_id_switch(struct ci_hdrc *ci)
 
 		ci_role_stop(ci);
 
-		if (role == CI_ROLE_GADGET)
+		if (role == CI_ROLE_GADGET &&
+				IS_ERR(ci->platdata->vbus_extcon.edev))
 			/*
-			 * wait vbus lower than OTGSC_BSV before connecting
-			 * to host
+			 * Wait vbus lower than OTGSC_BSV before connecting
+			 * to host. If connecting status is from an external
+			 * connector instead of register, we don't need to
+			 * care vbus on the board, since it will not affect
+			 * external connector status.
 			 */
 			hw_wait_vbus_lower_bsv(ci);
 
 		ci_role_start(ci, role);
+		/* vbus change may have already occurred */
+		if (role == CI_ROLE_GADGET)
+			ci_handle_vbus_change(ci);
 	}
 }
 /**
@@ -199,14 +206,17 @@ static void ci_otg_work(struct work_struct *work)
 	}
 
 	pm_runtime_get_sync(ci->dev);
+
 	if (ci->id_event) {
 		ci->id_event = false;
 		ci_handle_id_switch(ci);
-	} else if (ci->b_sess_valid_event) {
+	}
+
+	if (ci->b_sess_valid_event) {
 		ci->b_sess_valid_event = false;
 		ci_handle_vbus_change(ci);
-	} else
-		dev_err(ci->dev, "unexpected event occurs at %s\n", __func__);
+	}
+
 	pm_runtime_put_sync(ci->dev);
 
 	enable_irq(ci->irq);

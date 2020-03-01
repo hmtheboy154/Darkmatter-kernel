@@ -24,6 +24,7 @@
 #include <linux/kernel.h>
 #include <linux/component.h>
 #include <drm/i915_component.h>
+#include <drm/intel_lpe_audio.h>
 #include "intel_drv.h"
 
 #include <drm/drmP.h>
@@ -76,6 +77,9 @@ static const struct {
 /* HDMI N/CTS table */
 #define TMDS_297M 297000
 #define TMDS_296M 296703
+#define TMDS_594M 594000
+#define TMDS_593M 593407
+
 static const struct {
 	int sample_rate;
 	int clock;
@@ -96,6 +100,20 @@ static const struct {
 	{ 176400, TMDS_297M, 18816, 247500 },
 	{ 192000, TMDS_296M, 23296, 281250 },
 	{ 192000, TMDS_297M, 20480, 247500 },
+	{ 44100, TMDS_593M, 8918, 937500 },
+	{ 44100, TMDS_594M, 9408, 990000 },
+	{ 48000, TMDS_593M, 5824, 562500 },
+	{ 48000, TMDS_594M, 6144, 594000 },
+	{ 32000, TMDS_593M, 5824, 843750 },
+	{ 32000, TMDS_594M, 3072, 445500 },
+	{ 88200, TMDS_593M, 17836, 937500 },
+	{ 88200, TMDS_594M, 18816, 990000 },
+	{ 96000, TMDS_593M, 11648, 562500 },
+	{ 96000, TMDS_594M, 12288, 594000 },
+	{ 176400, TMDS_593M, 35672, 937500 },
+	{ 176400, TMDS_594M, 37632, 990000 },
+	{ 192000, TMDS_593M, 23296, 562500 },
+	{ 192000, TMDS_594M, 24576, 594000 },
 };
 
 /* get AUD_CONFIG_PIXEL_CLOCK_HDMI_* value for mode */
@@ -525,6 +543,10 @@ void intel_audio_codec_enable(struct intel_encoder *intel_encoder)
 
 	if (acomp && acomp->audio_ops && acomp->audio_ops->pin_eld_notify)
 		acomp->audio_ops->pin_eld_notify(acomp->audio_ops->audio_ptr, (int) port);
+
+	if (HAS_LPE_AUDIO(dev_priv))
+		intel_lpe_audio_notify(dev_priv, connector->eld, port,
+				       crtc->config->port_clock, true);
 }
 
 /**
@@ -553,6 +575,9 @@ void intel_audio_codec_disable(struct intel_encoder *intel_encoder)
 
 	if (acomp && acomp->audio_ops && acomp->audio_ops->pin_eld_notify)
 		acomp->audio_ops->pin_eld_notify(acomp->audio_ops->audio_ptr, (int) port);
+
+	if (HAS_LPE_AUDIO(dev_priv))
+		intel_lpe_audio_notify(dev_priv, NULL, port, 0, true);
 }
 
 /**

@@ -3545,8 +3545,10 @@ MODULE_DEVICE_TABLE(i2c, rt5645_i2c_id);
 #ifdef CONFIG_ACPI
 static const struct acpi_device_id rt5645_acpi_match[] = {
 	{ "10EC5645", 0 },
+	{ "10EC5648", 0 },
 	{ "10EC5650", 0 },
 	{ "10EC5640", 0 },
+	{ "10EC3270", 0 },
 	{},
 };
 MODULE_DEVICE_TABLE(acpi, rt5645_acpi_match);
@@ -3581,6 +3583,14 @@ static const struct dmi_system_id dmi_platform_intel_braswell[] = {
 		.ident = "Microsoft Surface 3",
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "Surface 3"),
+		},
+	},
+	{
+		.ident = "Microsoft Surface 3",
+		.matches = {
+			DMI_MATCH(DMI_BIOS_VENDOR, "American Megatrends Inc."),
+			DMI_MATCH(DMI_SYS_VENDOR, "OEMB"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "OEMB"),
 		},
 	},
 	{ }

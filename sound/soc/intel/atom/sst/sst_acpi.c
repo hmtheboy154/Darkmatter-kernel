@@ -240,9 +240,16 @@ static int sst_platform_get_resources(struct intel_sst_drv *ctx)
 }
 
 
-static int is_byt_cr(struct device *dev, bool *bytcr)
+static int is_byt_cr(struct device *dev, struct sst_acpi_mach *mach, bool *bytcr)
 {
 	int status = 0;
+
+	/* Lenovo Yoga2 exception - acpi_ipc_irq_index is the 1st index,
+	   but iosf_mbi_read (bios_status) returns 0 for bits 26:27 */
+	if (!strcmp(mach->drv_name, "bytcr_wm5102")) {
+		*bytcr = true;
+		return status;
+	}
 
 	if (IS_ENABLED(CONFIG_IOSF_MBI)) {
 		static const struct x86_cpu_id cpu_ids[] = {
@@ -320,7 +327,7 @@ static int sst_acpi_probe(struct platform_device *pdev)
 	if (ret < 0)
 		return ret;
 
-	ret = is_byt_cr(dev, &bytcr);
+	ret = is_byt_cr(dev, mach, &bytcr);
 	if (!((ret < 0) || (bytcr == false))) {
 		dev_info(dev, "Detected Baytrail-CR platform\n");
 
@@ -420,7 +427,21 @@ static const struct dmi_system_id byt_table[] = {
 		.callback = byt_thinkpad10_quirk_cb,
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "20C3001VHH"),
+			DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad 10"),
+		},
+	},
+	{
+		.callback = byt_thinkpad10_quirk_cb,
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+			DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad Tablet B"),
+		},
+	},
+	{
+		.callback = byt_thinkpad10_quirk_cb,
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
+			DMI_MATCH(DMI_PRODUCT_VERSION, "Lenovo Miix 2 10"),
 		},
 	},
 	{ }
@@ -432,6 +453,12 @@ static const struct dmi_system_id cht_table[] = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "Surface 3"),
+		},
+		.callback = cht_surface_quirk_cb,
+		.matches = {
+			DMI_MATCH(DMI_BIOS_VENDOR, "American Megatrends Inc."),
+			DMI_MATCH(DMI_SYS_VENDOR, "OEMB"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "OEMB"),
 		},
 	},
 	{ }
@@ -478,6 +505,10 @@ static struct sst_acpi_mach sst_acpi_bytcr[] = {
 						&byt_rvp_platform_data },
 	{"INTCCFFD", "bytcr_rt5640", "intel/fw_sst_0f28.bin", "bytcr_rt5640", NULL,
 						&byt_rvp_platform_data },
+	{"WM510204", "bytcr_wm5102", "intel/fw_sst_0f28.bin", "bytcr_wm5102", NULL,
+						&byt_rvp_platform_data },
+	{"WM510205", "bytcr_wm5102", "intel/fw_sst_0f28.bin", "bytcr_wm5102", NULL,
+						&byt_rvp_platform_data },
 	{"10EC5651", "bytcr_rt5651", "intel/fw_sst_0f28.bin", "bytcr_rt5651", NULL,
 						&byt_rvp_platform_data },
 	{},
@@ -487,10 +518,15 @@ static struct sst_acpi_mach sst_acpi_bytcr[] = {
 static struct sst_acpi_mach sst_acpi_chv[] = {
 	{"10EC5670", "cht-bsw-rt5672", "intel/fw_sst_22a8.bin", "cht-bsw", NULL,
 						&chv_platform_data },
+	{"10EC5672", "cht-bsw-rt5672", "intel/fw_sst_22a8.bin", "cht-bsw", NULL,
+						&chv_platform_data },
 	{"10EC5645", "cht-bsw-rt5645", "intel/fw_sst_22a8.bin", "cht-bsw", NULL,
 						&chv_platform_data },
 	{"10EC5650", "cht-bsw-rt5645", "intel/fw_sst_22a8.bin", "cht-bsw", NULL,
 						&chv_platform_data },
+	{"10EC3270", "cht-bsw-rt5645", "intel/fw_sst_22a8.bin", "cht-bsw", NULL,
+						&chv_platform_data },
+
 	{"193C9890", "cht-bsw-max98090", "intel/fw_sst_22a8.bin", "cht-bsw", NULL,
 						&chv_platform_data },
 	/* some CHT-T platforms rely on RT5640, use Baytrail machine driver */

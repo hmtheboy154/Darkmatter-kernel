@@ -219,7 +219,9 @@ struct tcp_sock {
 	} rack;
 	u16	advmss;		/* Advertised MSS			*/
 	u8	rate_app_limited:1,  /* rate_{delivered,interval_us} limited? */
-		unused:7;
+		fastopen_connect:1, /* FASTOPEN_CONNECT sockopt */
+		is_sack_reneg:1,    /* in recovery from loss with SACK reneg? */
+		unused:5;
 	u8	nonagle     : 4,/* Disable Nagle algorithm?             */
 		thin_lto    : 1,/* Use linear timeouts for thin streams */
 		thin_dupack : 1,/* Fast retransmit on first dupack      */
@@ -336,7 +338,7 @@ struct tcp_sock {
 
 /* Receiver queue space */
 	struct {
-		int	space;
+		u32	space;
 		u32	seq;
 		u32	time;
 	} rcvq_space;
@@ -431,5 +433,8 @@ static inline void tcp_saved_syn_free(struct tcp_sock *tp)
 	kfree(tp->saved_syn);
 	tp->saved_syn = NULL;
 }
+
+int tcp_skb_shift(struct sk_buff *to, struct sk_buff *from, int pcount,
+		  int shiftlen);
 
 #endif	/* _LINUX_TCP_H */

@@ -103,9 +103,6 @@ extern int in_suspend;
 extern dev_t swsusp_resume_device;
 extern sector_t swsusp_resume_block;
 
-extern asmlinkage int swsusp_arch_suspend(void);
-extern asmlinkage int swsusp_arch_resume(void);
-
 extern int create_basic_memory_bitmaps(void);
 extern void free_basic_memory_bitmaps(void);
 extern int hibernate_preallocate_memory(void);
@@ -189,11 +186,15 @@ extern void swsusp_show_speed(ktime_t, ktime_t, unsigned int, char *);
 
 #ifdef CONFIG_SUSPEND
 /* kernel/power/suspend.c */
-extern const char *pm_labels[];
+extern const char * const pm_labels[];
 extern const char *pm_states[];
+extern const char *mem_sleep_states[];
+extern suspend_state_t mem_sleep_current;
 
 extern int suspend_devices_and_enter(suspend_state_t state);
 #else /* !CONFIG_SUSPEND */
+#define mem_sleep_current	PM_SUSPEND_ON
+
 static inline int suspend_devices_and_enter(suspend_state_t state)
 {
 	return -ENOSYS;

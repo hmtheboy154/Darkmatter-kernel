@@ -36,8 +36,6 @@ void amdgpu_gem_object_free(struct drm_gem_object *gobj)
 	struct amdgpu_bo *robj = gem_to_amdgpu_bo(gobj);
 
 	if (robj) {
-		if (robj->gem_base.import_attach)
-			drm_prime_gem_destroy(&robj->gem_base, robj->tbo.sg);
 		amdgpu_mn_unregister(robj);
 		amdgpu_bo_unref(&robj);
 	}
@@ -407,10 +405,8 @@ int amdgpu_gem_wait_idle_ioctl(struct drm_device *dev, void *data,
 		return -ENOENT;
 	}
 	robj = gem_to_amdgpu_bo(gobj);
-	if (timeout == 0)
-		ret = reservation_object_test_signaled_rcu(robj->tbo.resv, true);
-	else
-		ret = reservation_object_wait_timeout_rcu(robj->tbo.resv, true, true, timeout);
+	ret = reservation_object_wait_timeout_rcu(robj->tbo.resv, true, true,
+						  timeout);
 
 	/* ret == 0 means not signaled,
 	 * ret > 0 means signaled
@@ -704,7 +700,8 @@ int amdgpu_mode_dumb_create(struct drm_file *file_priv,
 	uint32_t handle;
 	int r;
 
-	args->pitch = amdgpu_align_pitch(adev, args->width, args->bpp, 0) * ((args->bpp + 1) / 8);
+	args->pitch = amdgpu_align_pitch(adev, args->width,
+					 DIV_ROUND_UP(args->bpp, 8), 0);
 	args->size = (u64)args->pitch * args->height;
 	args->size = ALIGN(args->size, PAGE_SIZE);
 

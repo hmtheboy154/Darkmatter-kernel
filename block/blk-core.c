@@ -41,6 +41,8 @@
 #include "blk-mq.h"
 #include "blk-wbt.h"
 
+#include <linux/math64.h>
+
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_bio_remap);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_rq_remap);
 EXPORT_TRACEPOINT_SYMBOL_GPL(block_bio_complete);
@@ -234,7 +236,7 @@ EXPORT_SYMBOL(blk_start_queue_async);
  **/
 void blk_start_queue(struct request_queue *q)
 {
-	WARN_ON(!irqs_disabled());
+	WARN_ON(!in_interrupt() && !irqs_disabled());
 
 	queue_flag_clear(QUEUE_FLAG_STOPPED, q);
 	__blk_run_queue(q);
@@ -283,6 +285,7 @@ EXPORT_SYMBOL(blk_stop_queue);
 void blk_sync_queue(struct request_queue *q)
 {
 	del_timer_sync(&q->timeout);
+	cancel_work_sync(&q->timeout_work);
 
 	if (q->mq_ops) {
 		struct blk_mq_hw_ctx *hctx;
@@ -527,8 +530,8 @@ void blk_set_queue_dying(struct request_queue *q)
 
 		blk_queue_for_each_rl(rl, q) {
 			if (rl->rq_pool) {
-				wake_up(&rl->wait[BLK_RW_SYNC]);
-				wake_up(&rl->wait[BLK_RW_ASYNC]);
+				wake_up_all(&rl->wait[BLK_RW_SYNC]);
+				wake_up_all(&rl->wait[BLK_RW_ASYNC]);
 			}
 		}
 	}
@@ -652,7 +655,6 @@ EXPORT_SYMBOL(blk_alloc_queue);
 int blk_queue_enter(struct request_queue *q, bool nowait)
 {
 	while (true) {
-		int ret;
 
 		if (percpu_ref_tryget_live(&q->q_usage_counter))
 			return 0;
@@ -660,13 +662,11 @@ int blk_queue_enter(struct request_queue *q, bool nowait)
 		if (nowait)
 			return -EBUSY;
 
-		ret = wait_event_interruptible(q->mq_freeze_wq,
-				!atomic_read(&q->mq_freeze_depth) ||
-				blk_queue_dying(q));
+		wait_event(q->mq_freeze_wq,
+			   !atomic_read(&q->mq_freeze_depth) ||
+			   blk_queue_dying(q));
 		if (blk_queue_dying(q))
 			return -ENODEV;
-		if (ret)
-			return ret;
 	}
 }
 
@@ -721,6 +721,7 @@ struct request_queue *blk_alloc_queue_node(gfp_t gfp_mask, int node_id)
 	setup_timer(&q->backing_dev_info.laptop_mode_wb_timer,
 		    laptop_mode_timer_fn, (unsigned long) q);
 	setup_timer(&q->timeout, blk_rq_timed_out_timer, (unsigned long) q);
+	INIT_WORK(&q->timeout_work, NULL);
 	INIT_LIST_HEAD(&q->queue_head);
 	INIT_LIST_HEAD(&q->timeout_list);
 	INIT_LIST_HEAD(&q->icq_list);
@@ -883,8 +884,7 @@ blk_init_allocated_queue(struct request_queue *q, request_fn_proc *rfn,
 
 fail:
 	blk_free_flush_queue(q->fq);
-	wbt_exit(q->rq_wb);
-	q->rq_wb = NULL;
+	q->fq = NULL;
 	return NULL;
 }
 EXPORT_SYMBOL(blk_init_allocated_queue);
@@ -3588,3 +3588,52 @@ int __init blk_dev_init(void)
 
 	return 0;
 }
+
+/*
+ * Blk IO latency support. We want this to be as cheap as possible, so doing
+ * this lockless (and avoiding atomics), a few off by a few errors in this
+ * code is not harmful, and we don't want to do anything that is
+ * perf-impactful.
+ * TODO : If necessary, we can make the histograms per-cpu and aggregate
+ * them when printing them out.
+ */
+ssize_t
+blk_latency_hist_show(char* name, struct io_latency_state *s, char *buf,
+		int buf_size)
+{
+	int i;
+	int bytes_written = 0;
+	u_int64_t num_elem, elem;
+	int pct;
+	u_int64_t average;
+
+       num_elem = s->latency_elems;
+       if (num_elem > 0) {
+	       average = div64_u64(s->latency_sum, s->latency_elems);
+	       bytes_written += scnprintf(buf + bytes_written,
+			       buf_size - bytes_written,
+			       "IO svc_time %s Latency Histogram (n = %llu,"
+			       " average = %llu):\n", name, num_elem, average);
+	       for (i = 0;
+		    i < ARRAY_SIZE(latency_x_axis_us);
+		    i++) {
+		       elem = s->latency_y_axis[i];
+		       pct = div64_u64(elem * 100, num_elem);
+		       bytes_written += scnprintf(buf + bytes_written,
+				       PAGE_SIZE - bytes_written,
+				       "\t< %6lluus%15llu%15d%%\n",
+				       latency_x_axis_us[i],
+				       elem, pct);
+	       }
+	       /* Last element in y-axis table is overflow */
+	       elem = s->latency_y_axis[i];
+	       pct = div64_u64(elem * 100, num_elem);
+	       bytes_written += scnprintf(buf + bytes_written,
+			       PAGE_SIZE - bytes_written,
+			       "\t>=%6lluus%15llu%15d%%\n",
+			       latency_x_axis_us[i - 1], elem, pct);
+	}
+
+	return bytes_written;
+}
+EXPORT_SYMBOL(blk_latency_hist_show);

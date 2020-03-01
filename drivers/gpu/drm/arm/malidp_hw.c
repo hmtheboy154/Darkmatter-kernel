@@ -198,9 +198,6 @@ static void malidp500_modeset(struct malidp_hw_device *hwdev, struct videomode *
 
 static int malidp500_rotmem_required(struct malidp_hw_device *hwdev, u16 w, u16 h, u32 fmt)
 {
-	unsigned int depth;
-	int bpp;
-
 	/* RGB888 or BGR888 can't be rotated */
 	if ((fmt == DRM_FORMAT_RGB888) || (fmt == DRM_FORMAT_BGR888))
 		return -EINVAL;
@@ -210,9 +207,7 @@ static int malidp500_rotmem_required(struct malidp_hw_device *hwdev, u16 w, u16 
 	 * worth of pixel data. Required size is then:
 	 *    size = rotated_width * (bpp / 8) * 8;
 	 */
-	drm_fb_get_bpp_depth(fmt, &depth, &bpp);
-
-	return w * bpp;
+	return w * drm_format_plane_cpp(fmt, 0) * 8;
 }
 
 static int malidp550_query_hw(struct malidp_hw_device *hwdev)
@@ -432,7 +427,8 @@ const struct malidp_hw_device malidp_device[MALIDP_MAX_DEVICES] = {
 				.vsync_irq = MALIDP500_DE_IRQ_VSYNC,
 			},
 			.se_irq_map = {
-				.irq_mask = MALIDP500_SE_IRQ_CONF_MODE,
+				.irq_mask = MALIDP500_SE_IRQ_CONF_MODE |
+					    MALIDP500_SE_IRQ_GLOBAL,
 				.vsync_irq = 0,
 			},
 			.dc_irq_map = {

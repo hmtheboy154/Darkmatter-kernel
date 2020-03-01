@@ -280,7 +280,7 @@ static int i915_getparam(struct drm_device *dev, void *data,
 		value = i915.semaphores;
 		break;
 	case I915_PARAM_HAS_SECURE_BATCHES:
-		value = capable(CAP_SYS_ADMIN);
+		value = HAS_SECURE_BATCHES(dev_priv) && capable(CAP_SYS_ADMIN);
 		break;
 	case I915_PARAM_CMD_PARSER_VERSION:
 		value = i915_cmd_parser_get_version(dev_priv);
@@ -1130,7 +1130,8 @@ static void i915_driver_register(struct drm_i915_private *dev_priv)
 	if (IS_GEN5(dev_priv))
 		intel_gpu_ips_init(dev_priv);
 
-	i915_audio_component_init(dev_priv);
+	if (intel_lpe_audio_init(dev_priv) < 0)
+		i915_audio_component_init(dev_priv);
 
 	/*
 	 * Some ports require correctly set-up hpd registers for detection to
@@ -1148,7 +1149,10 @@ static void i915_driver_register(struct drm_i915_private *dev_priv)
  */
 static void i915_driver_unregister(struct drm_i915_private *dev_priv)
 {
-	i915_audio_component_cleanup(dev_priv);
+	if (HAS_LPE_AUDIO(dev_priv))
+		intel_lpe_audio_teardown(dev_priv);
+	else
+		i915_audio_component_cleanup(dev_priv);
 
 	intel_gpu_ips_teardown();
 	acpi_video_unregister();
@@ -1445,7 +1449,7 @@ static int i915_drm_suspend(struct drm_device *dev)
 	opregion_target_state = suspend_to_idle(dev_priv) ? PCI_D1 : PCI_D3cold;
 	intel_opregion_notify_adapter(dev_priv, opregion_target_state);
 
-	intel_uncore_forcewake_reset(dev_priv, false);
+	intel_uncore_suspend(dev_priv);
 	intel_opregion_unregister(dev_priv);
 
 	intel_fbdev_set_suspend(dev, FBINFO_STATE_SUSPENDED, true);
@@ -1470,6 +1474,7 @@ static int i915_drm_suspend_late(struct drm_device *dev, bool hibernation)
 	disable_rpm_wakeref_asserts(dev_priv);
 
 	intel_display_set_init_power(dev_priv, false);
+	i915_rc6_ctx_wa_suspend(dev_priv);
 
 	fw_csr = !IS_BROXTON(dev_priv) &&
 		suspend_to_idle(dev_priv) && dev_priv->csr.dmc_payload;
@@ -1688,7 +1693,7 @@ static int i915_drm_resume_early(struct drm_device *dev)
 		DRM_ERROR("Resume prepare failed: %d, continuing anyway\n",
 			  ret);
 
-	intel_uncore_early_sanitize(dev_priv, true);
+	intel_uncore_resume_early(dev_priv);
 
 	if (IS_BROXTON(dev_priv)) {
 		if (!dev_priv->suspended_to_idle)
@@ -1703,6 +1708,10 @@ static int i915_drm_resume_early(struct drm_device *dev)
 	if (IS_BROXTON(dev_priv) ||
 	    !(dev_priv->suspended_to_idle && dev_priv->csr.dmc_payload))
 		intel_power_domains_init_hw(dev_priv, true);
+	else
+		intel_display_set_init_power(dev_priv, true);
+
+	i915_rc6_ctx_wa_resume(dev_priv);
 
 	enable_rpm_wakeref_asserts(dev_priv);
 
@@ -2342,7 +2351,7 @@ static int intel_runtime_suspend(struct device *kdev)
 		return ret;
 	}
 
-	intel_uncore_forcewake_reset(dev_priv, false);
+	intel_uncore_suspend(dev_priv);
 
 	enable_rpm_wakeref_asserts(dev_priv);
 	WARN_ON_ONCE(atomic_read(&dev_priv->pm.wakeref_count));

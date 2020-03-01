@@ -114,6 +114,11 @@ int acpi_bus_get_status(struct acpi_device *device)
 	acpi_status status;
 	unsigned long long sta;
 
+	if (acpi_device_always_present(device)) {
+		acpi_set_device_status(device, ACPI_STA_DEFAULT);
+		return 0;
+	}
+
 	status = acpi_bus_get_status_handle(device->handle, &sta);
 	if (ACPI_FAILURE(status))
 		return -ENODEV;
@@ -158,7 +163,7 @@ int acpi_bus_get_private_data(acpi_handle handle, void **data)
 {
 	acpi_status status;
 
-	if (!*data)
+	if (!data)
 		return -EINVAL;
 
 	status = acpi_get_data(handle, acpi_bus_private_data_handler, data);
@@ -1197,7 +1202,6 @@ static int __init acpi_init(void)
 	acpi_wakeup_device_init();
 	acpi_debugger_init();
 	acpi_setup_sb_notify_handler();
-	acpi_set_processor_mapping();
 	return 0;
 }
 

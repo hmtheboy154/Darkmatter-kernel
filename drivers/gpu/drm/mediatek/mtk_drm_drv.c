@@ -83,7 +83,7 @@ static void mtk_atomic_complete(struct mtk_drm_private *private,
 	drm_atomic_helper_wait_for_vblanks(drm, state);
 
 	drm_atomic_helper_cleanup_planes(drm, state);
-	drm_atomic_state_free(state);
+	drm_atomic_state_put(state);
 }
 
 static void mtk_atomic_work(struct work_struct *work)
@@ -110,6 +110,7 @@ static int mtk_atomic_commit(struct drm_device *drm,
 
 	drm_atomic_helper_swap_state(state, true);
 
+	drm_atomic_state_get(state);
 	if (async)
 		mtk_atomic_schedule(private, state);
 	else
@@ -321,7 +322,8 @@ static void mtk_drm_unbind(struct device *dev)
 {
 	struct mtk_drm_private *private = dev_get_drvdata(dev);
 
-	drm_put_dev(private->drm);
+	drm_dev_unregister(private->drm);
+	drm_dev_unref(private->drm);
 	private->drm = NULL;
 }
 
@@ -422,12 +424,15 @@ static int mtk_drm_probe(struct platform_device *pdev)
 			comp = devm_kzalloc(dev, sizeof(*comp), GFP_KERNEL);
 			if (!comp) {
 				ret = -ENOMEM;
+				of_node_put(node);
 				goto err_node;
 			}
 
 			ret = mtk_ddp_comp_init(dev, node, comp, comp_id, NULL);
-			if (ret)
+			if (ret) {
+				of_node_put(node);
 				goto err_node;
+			}
 
 			private->ddp_comp[comp_id] = comp;
 		}
