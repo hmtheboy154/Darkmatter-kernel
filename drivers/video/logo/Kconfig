@@ -22,10 +22,13 @@ config LOGO_RANDOM
 	  Enable this option to use any available logo randomly at bootup.
 
 comment "Available logos"
+config LOGO_SUPREMEGAMERS_CLUT224
+	bool "224-color SupremeGamers Official logo, visit the forum : https://supreme-gamers.com/"
+	default y
 
 config LOGO_ZEN_CLUT224
 	bool "224-color Zen Kernel/Meditating Tux logo"
-	default y
+	default n
 
 config LOGO_LINUX_MONO
 	bool "Standard black and white Linux logo"

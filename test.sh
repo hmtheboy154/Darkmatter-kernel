@@ -27,6 +27,6 @@ make -j4 -C $(pwd) bzImage modules
 echo "Copy the modules and bzImage out"
 
 make INSTALL_MOD_PATH=$(pwd)/output modules_install 
-cp arch/x86_64/boot/bzImage $(pwd)/output/kernel
+cp arch/x86/boot/bzImage $(pwd)/output/kernel
 
 echo "End, enjoy :D"

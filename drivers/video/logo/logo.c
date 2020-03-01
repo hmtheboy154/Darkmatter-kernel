@@ -114,6 +114,9 @@ static const struct linux_logo *logo_clut224[] = {
 #ifdef CONFIG_LOGO_FBSD_CLUT224
 	&logo_fbsd_clut224,		/* Free BSD logo */
 #endif
+#ifdef CONFIG_LOGO_SUPREMEGAMERS_CLUT224    
+    &logo_supremegamers_clut224;       /* SupremeGamers logo */
+#endif    
 };
 
 #ifdef CONFIG_LOGO_RANDOM
