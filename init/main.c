@@ -793,7 +793,6 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	return ret;
 }
 
-
 extern initcall_t __initcall_start[];
 extern initcall_t __initcall0_start[];
 extern initcall_t __initcall1_start[];
@@ -868,7 +867,6 @@ static void __init do_basic_setup(void)
 	do_ctors();
 	usermodehelper_enable();
 	do_initcalls();
-	random_int_secret_init();
 }
 
 static void __init do_pre_smp_initcalls(void)
@@ -951,6 +949,8 @@ static int __ref kernel_init(void *unused)
 	flush_delayed_fput();
 
 	rcu_end_inkernel_boot();
+
+	print_scheduler_version();
 
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);
