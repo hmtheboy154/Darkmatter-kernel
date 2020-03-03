@@ -18,10 +18,18 @@ config FB_LOGO_EXTRA
 
 comment "Available logos"
 
+config LOGO_SUPREMEGAMERS_CLUT224
+	bool "224-color SupremeGamers Official logo, visit the forum : https://supreme-gamers.com/"
+	default y
+	
 config LOGO_ZEN_CLUT224
 	bool "224-color Zen Kernel/Meditating Tux logo"
-	default y
-
+	default n
+	
+config LOGO_TERI_CLUT224
+	bool "224-color Theresa Apocalypse logo"
+	default n
+	
 config LOGO_LINUX_MONO
 	bool "Standard black and white Linux logo"
 	default n
