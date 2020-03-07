@@ -21,8 +21,12 @@ config LOGO_LINUX_MONO
 
 config LOGO_LINUX_VGA16
 	bool "Standard 16-color Linux logo"
+	default n
+	
+config LOGO_SUPREMEGAMERS_CLUT224
+	bool "224-color SupremeGamers Official logo, visit the forum : https://supreme-gamers.com/"
 	default y
-
+	
 config LOGO_LINUX_CLUT224
 	bool "Standard 224-color Linux logo"
 	default y
