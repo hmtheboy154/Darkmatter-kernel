@@ -62,7 +62,7 @@ static void warn_setuid_and_fcaps_mixed(const char *fname)
  * @cred: The credentials to use
  * @ns:  The user namespace in which we need the capability
  * @cap: The capability to check for
- * @audit: Whether to write an audit message or not
+ * @opts contains options for the capable check <include/linux/security.h>
  *
  * Determine whether the nominated task has the specified capability amongst
  * its effective set, returning 0 if it does, -ve if it does not.
@@ -73,7 +73,7 @@ static void warn_setuid_and_fcaps_mixed(const char *fname)
  * kernel's capable() and has_capability() returns 1 for this case.
  */
 int __cap_capable(const struct cred *cred, struct user_namespace *targ_ns,
-		int cap, int audit)
+		int cap, unsigned int opts)
 {
 	struct user_namespace *ns = targ_ns;
 
@@ -111,9 +111,9 @@ int __cap_capable(const struct cred *cred, struct user_namespace *targ_ns,
 }
 
 int cap_capable(const struct cred *cred, struct user_namespace *targ_ns,
-		int cap, int audit)
+		int cap, unsigned int opts)
 {
-	int ret = __cap_capable(cred, targ_ns, cap, audit);
+	int ret = __cap_capable(cred, targ_ns, cap, opts);
 
 #ifdef CONFIG_ANDROID_PARANOID_NETWORK
 	if (ret != 0 && cap == CAP_NET_RAW && in_egroup_p(AID_NET_RAW)) {
