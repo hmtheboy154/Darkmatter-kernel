@@ -816,7 +816,7 @@ static int ipw2100_hw_send_command(struct ipw2100_priv *priv,
 	 * doesn't seem to have as many firmware restart cycles...
 	 *
 	 * As a test, we're sticking in a 1/100s delay here */
-	schedule_timeout_uninterruptible(msecs_to_jiffies(10));
+	schedule_msec_hrtimeout_uninterruptible((10));
 
 	return 0;
 
@@ -1267,7 +1267,7 @@ static int ipw2100_start_adapter(struct ipw2100_priv *priv)
 	IPW_DEBUG_FW("Waiting for f/w initialization to complete...\n");
 	i = 5000;
 	do {
-		schedule_timeout_uninterruptible(msecs_to_jiffies(40));
+		schedule_msec_hrtimeout_uninterruptible((40));
 		/* Todo... wait for sync command ... */
 
 		read_register(priv->net_dev, IPW_REG_INTA, &inta);
@@ -3206,8 +3206,9 @@ static void ipw2100_tx_send_data(struct ipw2100_priv *priv)
 	}
 }
 
-static void ipw2100_irq_tasklet(struct ipw2100_priv *priv)
+static void ipw2100_irq_tasklet(unsigned long data)
 {
+	struct ipw2100_priv *priv = (struct ipw2100_priv *)data;
 	struct net_device *dev = priv->net_dev;
 	unsigned long flags;
 	u32 inta, tmp;
@@ -6007,7 +6008,7 @@ static void ipw2100_rf_kill(struct work_struct *work)
 	spin_unlock_irqrestore(&priv->low_lock, flags);
 }
 
-static void ipw2100_irq_tasklet(struct ipw2100_priv *priv);
+static void ipw2100_irq_tasklet(unsigned long data);
 
 static const struct net_device_ops ipw2100_netdev_ops = {
 	.ndo_open		= ipw2100_open,
@@ -6137,7 +6138,7 @@ static struct net_device *ipw2100_alloc_device(struct pci_dev *pci_dev,
 	INIT_DELAYED_WORK(&priv->rf_kill, ipw2100_rf_kill);
 	INIT_DELAYED_WORK(&priv->scan_event, ipw2100_scan_event);
 
-	tasklet_init(&priv->irq_tasklet, (void (*)(unsigned long))
+	tasklet_init(&priv->irq_tasklet,
 		     ipw2100_irq_tasklet, (unsigned long)priv);
 
 	/* NOTE:  We do not start the deferred work for status checks yet */

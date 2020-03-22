@@ -2,6 +2,19 @@
 /*
  * Scheduler internal types and methods:
  */
+#ifdef CONFIG_SCHED_MUQSS
+#include "MuQSS.h"
+
+/* Begin compatibility wrappers for MuQSS/CFS differences */
+#define rq_rt_nr_running(rq) ((rq)->rt_nr_running)
+#define rq_h_nr_running(rq) ((rq)->nr_running)
+
+#else /* CONFIG_SCHED_MUQSS */
+
+#define rq_rt_nr_running(rq) ((rq)->rt.rt_nr_running)
+#define rq_h_nr_running(rq) ((rq)->cfs.h_nr_running)
+
+
 #include <linux/sched.h>
 
 #include <linux/sched/autogroup.h>
@@ -1728,7 +1741,7 @@ struct sched_class {
 					       struct task_struct *prev,
 					       struct rq_flags *rf);
 	void (*put_prev_task)(struct rq *rq, struct task_struct *p);
-	void (*set_next_task)(struct rq *rq, struct task_struct *p);
+	void (*set_next_task)(struct rq *rq, struct task_struct *p, bool first);
 
 #ifdef CONFIG_SMP
 	int (*balance)(struct rq *rq, struct task_struct *prev, struct rq_flags *rf);
@@ -1780,7 +1793,7 @@ static inline void put_prev_task(struct rq *rq, struct task_struct *prev)
 static inline void set_next_task(struct rq *rq, struct task_struct *next)
 {
 	WARN_ON_ONCE(rq->curr != next);
-	next->sched_class->set_next_task(rq, next);
+	next->sched_class->set_next_task(rq, next, false);
 }
 
 #ifdef CONFIG_SMP
@@ -2309,7 +2322,7 @@ static inline void cpufreq_update_util(struct rq *rq, unsigned int flags) {}
 #endif /* CONFIG_CPU_FREQ */
 
 #ifdef CONFIG_UCLAMP_TASK
-enum uclamp_id uclamp_eff_value(struct task_struct *p, enum uclamp_id clamp_id);
+unsigned int uclamp_eff_value(struct task_struct *p, enum uclamp_id clamp_id);
 
 static __always_inline
 unsigned int uclamp_util_with(struct rq *rq, unsigned int util,
@@ -2496,3 +2509,30 @@ static inline void membarrier_switch_mm(struct rq *rq,
 {
 }
 #endif
+
+/* MuQSS compatibility functions */
+static inline bool softirq_pending(int cpu)
+{
+	return false;
+}
+
+#ifdef CONFIG_64BIT
+static inline u64 read_sum_exec_runtime(struct task_struct *t)
+{
+	return t->se.sum_exec_runtime;
+}
+#else
+static inline u64 read_sum_exec_runtime(struct task_struct *t)
+{
+	u64 ns;
+	struct rq_flags rf;
+	struct rq *rq;
+
+	rq = task_rq_lock(t, &rf);
+	ns = t->se.sum_exec_runtime;
+	task_rq_unlock(rq, t, &rf);
+
+	return ns;
+}
+#endif
+#endif /* CONFIG_SCHED_MUQSS */

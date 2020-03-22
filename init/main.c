@@ -553,6 +553,7 @@ static void __init mm_init(void)
 	 * bigger than MAX_ORDER unless SPARSEMEM.
 	 */
 	page_ext_init_flatmem();
+	init_debug_pagealloc();
 	report_meminit();
 	mem_init();
 	kmem_cache_init();
@@ -1123,6 +1124,8 @@ static int __ref kernel_init(void *unused)
 	numa_default_policy();
 
 	rcu_end_inkernel_boot();
+
+	print_scheduler_version();
 
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);

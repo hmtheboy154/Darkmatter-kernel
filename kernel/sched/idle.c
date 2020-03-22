@@ -225,6 +225,8 @@ exit_idle:
 static void do_idle(void)
 {
 	int cpu = smp_processor_id();
+	bool pending = false;
+
 	/*
 	 * If the arch has a polling bit, we maintain an invariant:
 	 *
@@ -235,7 +237,10 @@ static void do_idle(void)
 	 */
 
 	__current_set_polling();
-	tick_nohz_idle_enter();
+	if (unlikely(softirq_pending(cpu)))
+		pending = true;
+	else
+		tick_nohz_idle_enter();
 
 	while (!need_resched()) {
 		rmb();
@@ -273,7 +278,8 @@ static void do_idle(void)
 	 * an IPI to fold the state for us.
 	 */
 	preempt_set_need_resched();
-	tick_nohz_idle_exit();
+	if (!pending)
+		tick_nohz_idle_exit();
 	__current_clr_polling();
 
 	/*
@@ -355,6 +361,7 @@ void cpu_startup_entry(enum cpuhp_state state)
 		do_idle();
 }
 
+#ifndef CONFIG_SCHED_MUQSS
 /*
  * idle-task scheduling class.
  */
@@ -385,7 +392,7 @@ static void put_prev_task_idle(struct rq *rq, struct task_struct *prev)
 {
 }
 
-static void set_next_task_idle(struct rq *rq, struct task_struct *next)
+static void set_next_task_idle(struct rq *rq, struct task_struct *next, bool first)
 {
 	update_idle_core(rq);
 	schedstat_inc(rq->sched_goidle);
@@ -399,7 +406,7 @@ pick_next_task_idle(struct rq *rq, struct task_struct *prev, struct rq_flags *rf
 	if (prev)
 		put_prev_task(rq, prev);
 
-	set_next_task_idle(rq, next);
+	set_next_task_idle(rq, next, true);
 
 	return next;
 }
@@ -479,3 +486,4 @@ const struct sched_class idle_sched_class = {
 	.switched_to		= switched_to_idle,
 	.update_curr		= update_curr_idle,
 };
+#endif /* CONFIG_SCHED_MUQSS */
