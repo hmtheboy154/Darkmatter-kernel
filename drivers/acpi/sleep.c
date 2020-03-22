@@ -977,7 +977,7 @@ static int acpi_s2idle_prepare_late(void)
 	return 0;
 }
 
-static void acpi_s2idle_sync(void)
+static void acpi_s2idle_wake(void)
 {
 	/*
 	 * The EC driver uses the system workqueue and an additional special
@@ -987,8 +987,7 @@ static void acpi_s2idle_sync(void)
 	acpi_os_wait_events_complete(); /* synchronize Notify handling */
 }
 
-static void acpi_s2idle_wake(void)
-
+static bool acpi_s2idle_wake(void)
 {
 	if (!acpi_sci_irq_valid())
 		return pm_wakeup_pending();
