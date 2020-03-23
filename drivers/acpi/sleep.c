@@ -1001,8 +1001,13 @@ static void acpi_s2idle_wake(void)
 		 * should be missed by canceling the wakeup here.
 		 */
 		pm_system_cancel_wakeup();
-
-		acpi_s2idle_sync();
+		/*
+		 * The EC driver uses the system workqueue and an additional
+		 * special one, so those need to be flushed too.
+		 */
+		acpi_os_wait_events_complete(); /* synchronize EC GPE processing */
+		acpi_ec_flush_work();
+		acpi_os_wait_events_complete(); /* synchronize Notify handling */
 
 		rearm_wake_irq(acpi_sci_irq);
 	}
@@ -1019,13 +1024,6 @@ static void acpi_s2idle_restore_early(void)
 
 static void acpi_s2idle_restore(void)
 {
-	/*
-	 * Drain pending events before restoring the working-state configuration
-	 * of GPEs.
-	 */
-	acpi_os_wait_events_complete(); /* synchronize GPE processing */
-	acpi_s2idle_sync();
-
 	s2idle_wakeup = false;
 
 	acpi_enable_all_runtime_gpes();
