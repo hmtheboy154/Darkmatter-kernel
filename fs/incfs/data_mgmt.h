@@ -183,16 +183,20 @@ struct data_file {
 	/* File size in bytes */
 	loff_t df_size;
 
-	int df_block_count; /* File size in DATA_FILE_BLOCK_SIZE blocks */
+	/* File header flags */
+	u32 df_header_flags;
+
+	/* File size in DATA_FILE_BLOCK_SIZE blocks */
+	int df_data_block_count;
+
+	/* Total number of blocks, data + hash */
+	int df_total_block_count;
 
 	struct file_attr n_attr;
 
 	struct mtree *df_hash_tree;
 
-	struct ondisk_signature *df_signature;
-
-	/* True, if file signature has already been validated. */
-	bool df_signature_validated;
+	struct incfs_df_signature *df_signature;
 };
 
 struct dir_file {
@@ -219,6 +223,9 @@ struct mount_info *incfs_alloc_mount_info(struct super_block *sb,
 					  struct mount_options *options,
 					  struct path *backing_dir_path);
 
+int incfs_realloc_mount_info(struct mount_info *mi,
+			     struct mount_options *options);
+
 void incfs_free_mount_info(struct mount_info *mi);
 
 struct data_file *incfs_open_data_file(struct mount_info *mi, struct file *bf);
@@ -233,14 +240,16 @@ ssize_t incfs_read_data_file_block(struct mem_range dst, struct data_file *df,
 				   int index, int timeout_ms,
 				   struct mem_range tmp);
 
+int incfs_get_filled_blocks(struct data_file *df,
+			    struct incfs_get_filled_blocks_args *arg);
+
 int incfs_read_file_signature(struct data_file *df, struct mem_range dst);
 
 int incfs_process_new_data_block(struct data_file *df,
-				 struct incfs_new_data_block *block, u8 *data);
+				 struct incfs_fill_block *block, u8 *data);
 
 int incfs_process_new_hash_block(struct data_file *df,
-				 struct incfs_new_data_block *block, u8 *data);
-
+				 struct incfs_fill_block *block, u8 *data);
 
 bool incfs_fresh_pending_reads_exist(struct mount_info *mi, int last_number);
 
