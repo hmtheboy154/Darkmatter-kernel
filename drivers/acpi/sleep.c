@@ -906,6 +906,13 @@ static void acpi_s2idle_restore_early(void)
 }
 static void acpi_s2idle_restore(void)
 {
+	/*
+	 * Drain pending events before restoring the working-state configuration
+	 * of GPEs.
+	 */
+	acpi_os_wait_events_complete(); /* synchronize GPE processing */
+	acpi_s2idle_sync();
+
 	s2idle_wakeup = false;
 	acpi_enable_all_runtime_gpes();
 	acpi_disable_wakeup_devices(ACPI_STATE_S0);
