@@ -538,7 +538,7 @@ filter_export_list = sed -ne '/___ksymtab/s/.*+\([^ ]*\).*/EXTERN(\1)/p'
 link_export_list = rm -f $(dummy-object); \
 	echo | $(CC) $(a_flags) -c -o $(dummy-object) -x assembler -;\
 	$(LD) $(ld_flags) -r -o $@ -T $(ksyms-lds) $(dummy-object);\
-	rm $(dummy-object) $(ksyms-lds)
+	rm $(dummy-object)
 
 ifdef CONFIG_LTO_CLANG
 # objdump doesn't understand IR files and llvm-nm doesn't support archives,
