@@ -23,6 +23,8 @@ struct mipi_dsi_device;
 #define MIPI_DSI_MSG_USE_LPM	BIT(1)
 /* read mipi_dsi_msg.ctrl and unicast to only that ctrls */
 #define MIPI_DSI_MSG_UNICAST	BIT(2)
+/* Stack all commands until lastcommand bit and trigger all in one go */
+#define MIPI_DSI_MSG_LASTCOMMAND BIT(3)
 
 /**
  * struct mipi_dsi_msg - read/write DSI buffer
@@ -281,9 +283,9 @@ int mipi_dsi_dcs_set_tear_on(struct mipi_dsi_device *dsi,
 int mipi_dsi_dcs_set_pixel_format(struct mipi_dsi_device *dsi, u8 format);
 int mipi_dsi_dcs_set_tear_scanline(struct mipi_dsi_device *dsi, u16 scanline);
 int mipi_dsi_dcs_set_display_brightness(struct mipi_dsi_device *dsi,
-					u16 brightness);
+					u16 brightness, size_t num_params);
 int mipi_dsi_dcs_get_display_brightness(struct mipi_dsi_device *dsi,
-					u16 *brightness);
+					u16 *brightness, size_t num_params);
 
 /**
  * struct mipi_dsi_driver - DSI driver

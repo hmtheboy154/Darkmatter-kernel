@@ -233,6 +233,12 @@ enum drm_panel_orientation {
 /* Additional Colorimetry extension added as part of CTA 861.G */
 #define DRM_MODE_COLORIMETRY_DCI_P3_RGB_D65		11
 #define DRM_MODE_COLORIMETRY_DCI_P3_RGB_THEATER		12
+/* DP MSA Colorimetry Options */
+#define DRM_MODE_DP_COLORIMETRY_BT601_YCC		13
+#define DRM_MODE_DP_COLORIMETRY_BT709_YCC		14
+#define DRM_MODE_DP_COLORIMETRY_SRGB			15
+#define DRM_MODE_DP_COLORIMETRY_RGB_WIDE_GAMUT		16
+#define DRM_MODE_DP_COLORIMETRY_SCRGB			17
 
 /**
  * struct drm_display_info - runtime data about the connected sink
@@ -496,13 +502,6 @@ struct drm_connector_state {
 	 * drm_writeback_signal_completion()
 	 */
 	struct drm_writeback_job *writeback_job;
-
-	/**
-
-	 * @hdr_output_metadata:
-	 * DRM blob property for HDR output metadata
-	 */
-	struct drm_property_blob *hdr_output_metadata;
 };
 
 /**
@@ -1173,16 +1172,19 @@ struct drm_connector {
 	 */
 	struct llist_node free_node;
 
-	/* HDR metdata */
-	struct hdr_output_metadata hdr_output_metadata;
-	struct hdr_sink_metadata hdr_sink_metadata;
-
 	/**
 	 * @panel:
 	 *
 	 * Can find the panel which connected to drm_connector.
 	 */
 	struct drm_panel *panel;
+
+	/**
+	 * @checksum:
+	 *
+	 * The calculated checksum value of first 127 bytes of associated EDID.
+	 */
+	u8 checksum;
 };
 
 #define obj_to_connector(x) container_of(x, struct drm_connector, base)
