@@ -444,7 +444,7 @@ config DEFAULT_NET_SCH
 	default "fq_codel" if DEFAULT_FQ_CODEL
 	default "sfq" if DEFAULT_SFQ
 	default "cake" if DEFAULT_CAKE
-	default "pfifo_fast"
+	default "cake"
 endif
 
 comment "Classification"
