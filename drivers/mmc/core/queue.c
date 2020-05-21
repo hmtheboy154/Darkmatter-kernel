@@ -21,6 +21,7 @@
 #include "queue.h"
 #include "block.h"
 #include "core.h"
+#include "crypto.h"
 #include "card.h"
 #include "host.h"
 
@@ -111,8 +112,7 @@ static enum blk_eh_timer_return mmc_cqe_timed_out(struct request *req)
 				__mmc_cqe_recovery_notifier(mq);
 			return BLK_EH_RESET_TIMER;
 		}
-		/* No timeout (XXX: huh? comment doesn't make much sense) */
-		blk_mq_complete_request(req);
+		/* The request has gone already */
 		return BLK_EH_DONE;
 	default:
 		/* Timeout is handled by mmc core */
@@ -447,6 +447,8 @@ static int mmc_mq_init(struct mmc_queue *mq, struct mmc_card *card,
 	blk_queue_rq_timeout(mq->queue, 60 * HZ);
 
 	mmc_setup_queue(mq, card);
+
+	mmc_crypto_setup_queue(host, mq->queue);
 
 	return 0;
 }
