@@ -453,7 +453,7 @@ static int __setup_rt_frame(int sig, struct ksignal *ksig,
 
 	put_user_try {
 		/* Create the ucontext.  */
-		if (cpu_has_xsave)
+		if (fpu__save)
 			put_user_ex(UC_FP_XSTATE, &frame->uc.uc_flags);
 		else
 			put_user_ex(0, &frame->uc.uc_flags);
@@ -538,7 +538,7 @@ static int x32_setup_rt_frame(struct ksignal *ksig,
 
 	put_user_try {
 		/* Create the ucontext.  */
-		if (cpu_has_xsave)
+		if (fpu__save)
 			put_user_ex(UC_FP_XSTATE, &frame->uc.uc_flags);
 		else
 			put_user_ex(0, &frame->uc.uc_flags);
