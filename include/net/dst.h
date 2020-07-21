@@ -490,6 +490,14 @@ static inline struct dst_entry *xfrm_lookup(struct net *net,
 	return dst_orig;
 }
 
+static inline struct dst_entry *
+xfrm_lookup_with_ifid(struct net *net, struct dst_entry *dst_orig,
+		      const struct flowi *fl, const struct sock *sk,
+		      int flags, u32 if_id)
+{
+	return dst_orig;
+}
+
 static inline struct dst_entry *xfrm_lookup_route(struct net *net,
 						  struct dst_entry *dst_orig,
 						  const struct flowi *fl,
@@ -509,6 +517,12 @@ struct dst_entry *xfrm_lookup(struct net *net, struct dst_entry *dst_orig,
 			      const struct flowi *fl, const struct sock *sk,
 			      int flags);
 
+struct dst_entry *xfrm_lookup_with_ifid(struct net *net,
+					struct dst_entry *dst_orig,
+					const struct flowi *fl,
+					const struct sock *sk, int flags,
+					u32 if_id);
+
 struct dst_entry *xfrm_lookup_route(struct net *net, struct dst_entry *dst_orig,
 				    const struct flowi *fl, const struct sock *sk,
 				    int flags);
@@ -519,5 +533,13 @@ static inline struct xfrm_state *dst_xfrm(const struct dst_entry *dst)
 	return dst->xfrm;
 }
 #endif
+
+static inline void skb_dst_update_pmtu(struct sk_buff *skb, u32 mtu)
+{
+	struct dst_entry *dst = skb_dst(skb);
+
+	if (dst && dst->ops->update_pmtu)
+		dst->ops->update_pmtu(dst, NULL, skb, mtu);
+}
 
 #endif /* _NET_DST_H */

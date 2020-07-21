@@ -19,7 +19,7 @@
 
 #include "sched.h"
 
-unsigned long boosted_cpu_util(int cpu);
+unsigned long boosted_cpu_util(int cpu, unsigned long other_util);
 
 #define SUGOV_KTHREAD_PRIORITY	50
 
@@ -216,7 +216,7 @@ static void sugov_get_util(unsigned long *util, unsigned long *max, int cpu)
 
 	rt = sched_get_rt_rq_util(cpu);
 
-	*util = boosted_cpu_util(cpu) + rt;
+	*util = boosted_cpu_util(cpu, rt);
 	*util = min(*util, max_cap);
 	*max = max_cap;
 }
@@ -316,7 +316,8 @@ static void sugov_update_single(struct update_util_data *hook, u64 time,
 		 * Do not reduce the frequency if the CPU has not been idle
 		 * recently, as the reduction is likely to be premature then.
 		 */
-		if (busy && next_f < sg_policy->next_freq) {
+		if (busy && next_f < sg_policy->next_freq &&
+		    sg_policy->next_freq != UINT_MAX) {
 			next_f = sg_policy->next_freq;
 
 			/* Reset cached freq as next_freq has changed */
