@@ -702,6 +702,8 @@ struct task_struct {
 	const struct sched_class	*sched_class;
 	struct sched_entity		se;
 	struct sched_rt_entity		rt;
+#endif
+
 #ifdef CONFIG_SCHED_WALT
 	struct ravg ravg;
 	/*
