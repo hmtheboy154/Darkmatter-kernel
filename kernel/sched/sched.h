@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
+#ifdef CONFIG_SCHED_PDS
+#include "pds_sched.h"
+#else
 
 #include <linux/sched.h>
 #include <linux/sched/autogroup.h>
@@ -2210,3 +2213,5 @@ walt_task_in_cum_window_demand(struct rq *rq, struct task_struct *p)
 #else /* arch_scale_freq_capacity */
 #define arch_scale_freq_invariant()	(false)
 #endif
+
+#endif /* CONFIG_SCHED_PDS */

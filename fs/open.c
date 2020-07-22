@@ -34,8 +34,12 @@
 
 #include "internal.h"
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/fs.h>
+
 int do_truncate2(struct vfsmount *mnt, struct dentry *dentry, loff_t length,
 		unsigned int time_attrs, struct file *filp)
+
 {
 	int ret;
 	struct iattr newattrs;
@@ -64,11 +68,14 @@ int do_truncate2(struct vfsmount *mnt, struct dentry *dentry, loff_t length,
 	inode_unlock(dentry->d_inode);
 	return ret;
 }
+
 int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
 	struct file *filp)
 {
 	return do_truncate2(NULL, dentry, length, time_attrs, filp);
 }
+EXPORT_SYMBOL_GPL(do_truncate);
+
 
 long vfs_truncate(const struct path *path, loff_t length)
 {
@@ -703,6 +710,7 @@ int open_check_o_direct(struct file *f)
 	}
 	return 0;
 }
+EXPORT_SYMBOL_GPL(open_check_o_direct);
 
 static int do_dentry_open(struct file *f,
 			  struct inode *inode,
@@ -1075,6 +1083,7 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 		} else {
 			fsnotify_open(f);
 			fd_install(fd, f);
+			trace_do_sys_open(tmp->name, flags, mode);
 		}
 	}
 	putname(tmp);

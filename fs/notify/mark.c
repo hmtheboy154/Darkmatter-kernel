@@ -291,6 +291,7 @@ static void fsnotify_put_mark_wake(struct fsnotify_mark *mark)
 			wake_up(&group->notification_waitq);
 	}
 }
+EXPORT_SYMBOL_GPL(fsnotify_put_mark);
 
 bool fsnotify_prepare_user_wait(struct fsnotify_iter_info *iter_info)
 {
@@ -392,6 +393,7 @@ void fsnotify_destroy_mark(struct fsnotify_mark *mark,
 	mutex_unlock(&group->mark_mutex);
 	fsnotify_free_mark(mark);
 }
+EXPORT_SYMBOL_GPL(fsnotify_destroy_mark);
 
 /*
  * Sorting function for lists of fsnotify marks.
@@ -616,6 +618,7 @@ int fsnotify_add_mark(struct fsnotify_mark *mark, struct inode *inode,
 	mutex_unlock(&group->mark_mutex);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(fsnotify_add_mark);
 
 /*
  * Given a list of marks, find the mark associated with given group. If found
@@ -739,6 +742,7 @@ void fsnotify_init_mark(struct fsnotify_mark *mark,
 	fsnotify_get_group(group);
 	mark->group = group;
 }
+EXPORT_SYMBOL_GPL(fsnotify_init_mark);
 
 /*
  * Destroy all marks in destroy_list, waits for SRCU period to finish before
