@@ -54,14 +54,14 @@ int rtw_adhoc_tx_pwr = 1;
 int rtw_soft_ap = 0;
 //int smart_ps = 1;
 #ifdef CONFIG_POWER_SAVING
-int rtw_power_mgnt = PS_MODE_MAX;
+int rtw_power_mgnt = 0;
 #ifdef CONFIG_IPS_LEVEL_2
 int rtw_ips_mode = IPS_LEVEL_2;
 #else
 int rtw_ips_mode = IPS_NORMAL;
 #endif
 #else
-int rtw_power_mgnt = PS_MODE_ACTIVE;
+int rtw_power_mgnt = 0;
 int rtw_ips_mode = IPS_NONE;
 #endif
 module_param(rtw_ips_mode, int, 0644);
@@ -173,7 +173,7 @@ int rtw_antdiv_type = 0 ; //0:decide by efuse  1: for 88EE, 1Tx and 1RxCG are di
 int rtw_switch_usb3 = _FALSE; /* _FALSE: doesn't switch, _TRUE: switch from usb2.0 to usb 3.0 */
 
 #ifdef CONFIG_USB_AUTOSUSPEND
-int rtw_enusbss = 1;//0:disable,1:enable
+int rtw_enusbss = 0;//0:disable,1:enable
 #else
 int rtw_enusbss = 0;//0:disable,1:enable
 #endif
