@@ -236,24 +236,28 @@ int security_binder_set_context_mgr(struct task_struct *mgr)
 {
 	return call_int_hook(binder_set_context_mgr, 0, mgr);
 }
+EXPORT_SYMBOL_GPL(security_binder_set_context_mgr);
 
 int security_binder_transaction(struct task_struct *from,
 				struct task_struct *to)
 {
 	return call_int_hook(binder_transaction, 0, from, to);
 }
+EXPORT_SYMBOL_GPL(security_binder_transaction);
 
 int security_binder_transfer_binder(struct task_struct *from,
 				    struct task_struct *to)
 {
 	return call_int_hook(binder_transfer_binder, 0, from, to);
 }
+EXPORT_SYMBOL_GPL(security_binder_transfer_binder);
 
 int security_binder_transfer_file(struct task_struct *from,
 				  struct task_struct *to, struct file *file)
 {
 	return call_int_hook(binder_transfer_file, 0, from, to, file);
 }
+EXPORT_SYMBOL_GPL(security_binder_transfer_file);
 
 int security_ptrace_access_check(struct task_struct *child, unsigned int mode)
 {
@@ -538,6 +542,7 @@ int security_path_rmdir(const struct path *dir, struct dentry *dentry)
 		return 0;
 	return call_int_hook(path_rmdir, 0, dir, dentry);
 }
+EXPORT_SYMBOL_GPL(security_path_rmdir);
 
 int security_path_unlink(const struct path *dir, struct dentry *dentry)
 {
@@ -554,6 +559,7 @@ int security_path_symlink(const struct path *dir, struct dentry *dentry,
 		return 0;
 	return call_int_hook(path_symlink, 0, dir, dentry, old_name);
 }
+EXPORT_SYMBOL_GPL(security_path_symlink);
 
 int security_path_link(struct dentry *old_dentry, const struct path *new_dir,
 		       struct dentry *new_dentry)
@@ -562,6 +568,7 @@ int security_path_link(struct dentry *old_dentry, const struct path *new_dir,
 		return 0;
 	return call_int_hook(path_link, 0, old_dentry, new_dir, new_dentry);
 }
+EXPORT_SYMBOL_GPL(security_path_link);
 
 int security_path_rename(const struct path *old_dir, struct dentry *old_dentry,
 			 const struct path *new_dir, struct dentry *new_dentry,
@@ -589,6 +596,7 @@ int security_path_truncate(const struct path *path)
 		return 0;
 	return call_int_hook(path_truncate, 0, path);
 }
+EXPORT_SYMBOL_GPL(security_path_truncate);
 
 int security_path_chmod(const struct path *path, umode_t mode)
 {
@@ -596,6 +604,7 @@ int security_path_chmod(const struct path *path, umode_t mode)
 		return 0;
 	return call_int_hook(path_chmod, 0, path, mode);
 }
+EXPORT_SYMBOL_GPL(security_path_chmod);
 
 int security_path_chown(const struct path *path, kuid_t uid, kgid_t gid)
 {
@@ -689,6 +698,7 @@ int security_inode_readlink(struct dentry *dentry)
 		return 0;
 	return call_int_hook(inode_readlink, 0, dentry);
 }
+EXPORT_SYMBOL_GPL(security_inode_readlink);
 
 int security_inode_follow_link(struct dentry *dentry, struct inode *inode,
 			       bool rcu)
@@ -704,6 +714,7 @@ int security_inode_permission(struct inode *inode, int mask)
 		return 0;
 	return call_int_hook(inode_permission, 0, inode, mask);
 }
+EXPORT_SYMBOL_GPL(security_inode_permission);
 
 int security_inode_setattr(struct dentry *dentry, struct iattr *attr)
 {
@@ -875,6 +886,7 @@ int security_file_permission(struct file *file, int mask)
 
 	return fsnotify_perm(file, mask);
 }
+EXPORT_SYMBOL_GPL(security_file_permission);
 
 int security_file_alloc(struct file *file)
 {
@@ -934,6 +946,7 @@ int security_mmap_file(struct file *file, unsigned long prot,
 		return ret;
 	return ima_file_mmap(file, prot);
 }
+EXPORT_SYMBOL_GPL(security_mmap_file);
 
 int security_mmap_addr(unsigned long addr)
 {

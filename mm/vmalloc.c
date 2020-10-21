@@ -1307,6 +1307,7 @@ int map_kernel_range_noflush(unsigned long addr, unsigned long size,
 {
 	return vmap_page_range_noflush(addr, addr + size, prot, pages);
 }
+EXPORT_SYMBOL_GPL(map_kernel_range_noflush);
 
 /**
  * unmap_kernel_range_noflush - unmap kernel VM area
