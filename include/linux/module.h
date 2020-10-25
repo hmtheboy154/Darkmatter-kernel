@@ -22,7 +22,6 @@
 #include <linux/error-injection.h>
 #include <linux/tracepoint-defs.h>
 #include <linux/cfi.h>
-#include <linux/android_kabi.h>
 
 #include <linux/percpu.h>
 #include <asm/module.h>

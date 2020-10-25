@@ -938,8 +938,9 @@ static int parse_options(struct super_block *sb, char *options)
 
 		if (F2FS_OPTION(sbi).inline_xattr_size < min_size ||
 				F2FS_OPTION(sbi).inline_xattr_size > max_size) {
-			f2fs_err(sbi, "inline xattr size is out of range: %d ~ %d",
-				 min_size, max_size);
+			f2fs_msg(sb, KERN_ERR,
+				"inline xattr size is out of range: %d ~ %d",
+				min_size, max_size);
 			return -EINVAL;
 		}
 	}
@@ -1150,6 +1151,9 @@ static void f2fs_put_super(struct super_block *sb)
 	int i;
 	bool dropped;
 
+	/* unregister procfs/sysfs entries in advance to avoid race case */
+	f2fs_unregister_sysfs(sbi);
+
 	f2fs_quota_off_umount(sb);
 
 	/* prevent remaining shrinker jobs */
@@ -1214,8 +1218,6 @@ static void f2fs_put_super(struct super_block *sb)
 	f2fs_destroy_post_read_wq(sbi);
 
 	kvfree(sbi->ckpt);
-
-	f2fs_unregister_sysfs(sbi);
 
 	sb->s_fs_info = NULL;
 	if (sbi->s_chksum_driver)
@@ -1308,7 +1310,8 @@ static int f2fs_statfs_project(struct super_block *sb,
 		limit >>= sb->s_blocksize_bits;
 
 	if (limit && buf->f_blocks > limit) {
-		curblock = dquot->dq_dqb.dqb_curspace >> sb->s_blocksize_bits;
+		curblock = (dquot->dq_dqb.dqb_curspace +
+			    dquot->dq_dqb.dqb_rsvspace) >> sb->s_blocksize_bits;
 		buf->f_blocks = limit;
 		buf->f_bfree = buf->f_bavail =
 			(buf->f_blocks > curblock) ?
@@ -1615,7 +1618,7 @@ static void default_options(struct f2fs_sb_info *sbi)
 	set_opt(sbi, FLUSH_MERGE);
 	set_opt(sbi, DISCARD);
 	if (f2fs_sb_has_blkzoned(sbi))
-		F2FS_OPTION(sbi).fs_mode = FS_MODE_LFS;
+		set_opt_mode(sbi, F2FS_MOUNT_LFS);
 	else
 		F2FS_OPTION(sbi).fs_mode = FS_MODE_ADAPTIVE;
 
@@ -2678,8 +2681,9 @@ static int sanity_check_raw_super(struct f2fs_sb_info *sbi,
 	__u32 crc = 0;
 
 	if (le32_to_cpu(raw_super->magic) != F2FS_SUPER_MAGIC) {
-		f2fs_info(sbi, "Magic Mismatch, valid(0x%x) - read(0x%x)",
-			  F2FS_SUPER_MAGIC, le32_to_cpu(raw_super->magic));
+		f2fs_msg(sb, KERN_INFO,
+			"Magic Mismatch, valid(0x%x) - read(0x%x)",
+			F2FS_SUPER_MAGIC, le32_to_cpu(raw_super->magic));
 		return -EINVAL;
 	}
 
@@ -2688,13 +2692,15 @@ static int sanity_check_raw_super(struct f2fs_sb_info *sbi,
 		crc_offset = le32_to_cpu(raw_super->checksum_offset);
 		if (crc_offset !=
 			offsetof(struct f2fs_super_block, crc)) {
-			f2fs_info(sbi, "Invalid SB checksum offset: %zu",
-				  crc_offset);
+			f2fs_msg(sb, KERN_INFO,
+				"Invalid SB checksum offset: %zu",
+				crc_offset);
 			return -EFSCORRUPTED;
 		}
 		crc = le32_to_cpu(raw_super->crc);
 		if (!f2fs_crc_valid(sbi, crc, raw_super, crc_offset)) {
-			f2fs_info(sbi, "Invalid SB checksum value: %u", crc);
+			f2fs_msg(sb, KERN_INFO,
+				"Invalid SB checksum value: %u", crc);
 			return -EFSCORRUPTED;
 		}
 	}
@@ -2927,9 +2933,10 @@ int f2fs_sanity_check_ckpt(struct f2fs_sb_info *sbi)
 		for (j = 0; j < NR_CURSEG_DATA_TYPE; j++) {
 			if (le32_to_cpu(ckpt->cur_node_segno[i]) ==
 				le32_to_cpu(ckpt->cur_data_segno[j])) {
-				f2fs_err(sbi, "Node segment (%u) and Data segment (%u) has the same segno: %u",
-					 i, j,
-					 le32_to_cpu(ckpt->cur_node_segno[i]));
+				f2fs_msg(sbi->sb, KERN_ERR,
+					"Node segment (%u) and Data segment (%u)"
+					" has the same segno: %u", i, j,
+					le32_to_cpu(ckpt->cur_node_segno[i]));
 				return 1;
 			}
 		}
