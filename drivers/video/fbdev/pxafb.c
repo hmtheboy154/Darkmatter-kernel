@@ -1287,7 +1287,7 @@ static int pxafb_smart_thread(void *arg)
 		mutex_unlock(&fbi->ctrlr_lock);
 
 		set_current_state(TASK_INTERRUPTIBLE);
-		schedule_timeout(msecs_to_jiffies(30));
+		schedule_msec_hrtimeout((30));
 	}
 
 	pr_debug("%s(): task ending\n", __func__);
@@ -2425,8 +2425,8 @@ static int pxafb_remove(struct platform_device *dev)
 
 	free_pages_exact(fbi->video_mem, fbi->video_mem_size);
 
-	dma_free_wc(&dev->dev, fbi->dma_buff_size, fbi->dma_buff,
-		    fbi->dma_buff_phys);
+	dma_free_coherent(&dev->dev, fbi->dma_buff_size, fbi->dma_buff,
+			  fbi->dma_buff_phys);
 
 	return 0;
 }

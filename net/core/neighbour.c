@@ -235,6 +235,8 @@ static int neigh_forced_gc(struct neigh_table *tbl)
 
 			write_lock(&n->lock);
 			if ((n->nud_state == NUD_FAILED) ||
+			    (tbl->is_multicast &&
+			     tbl->is_multicast(n->primary_key)) ||
 			    time_after(tref, n->updated))
 				remove = true;
 			write_unlock(&n->lock);
@@ -1954,6 +1956,9 @@ static int neigh_add(struct sk_buff *skb, struct nlmsghdr *nlh,
 				   NEIGH_UPDATE_F_OVERRIDE_ISROUTER);
 	}
 
+	if (protocol)
+		neigh->protocol = protocol;
+
 	if (ndm->ndm_flags & NTF_EXT_LEARNED)
 		flags |= NEIGH_UPDATE_F_EXT_LEARNED;
 
@@ -1966,9 +1971,6 @@ static int neigh_add(struct sk_buff *skb, struct nlmsghdr *nlh,
 	} else
 		err = __neigh_update(neigh, lladdr, ndm->ndm_state, flags,
 				     NETLINK_CB(skb).portid, extack);
-
-	if (protocol)
-		neigh->protocol = protocol;
 
 	neigh_release(neigh);
 
@@ -3290,6 +3292,7 @@ static void *neigh_stat_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 		*pos = cpu+1;
 		return per_cpu_ptr(tbl->stats, cpu);
 	}
+	(*pos)++;
 	return NULL;
 }
 

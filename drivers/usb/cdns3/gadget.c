@@ -189,9 +189,9 @@ int cdns3_allocate_trb_pool(struct cdns3_endpoint *priv_ep)
 						       GFP_DMA32 | GFP_ATOMIC);
 		if (!priv_ep->trb_pool)
 			return -ENOMEM;
-	} else {
-		memset(priv_ep->trb_pool, 0, ring_size);
 	}
+
+	memset(priv_ep->trb_pool, 0, ring_size);
 
 	if (!priv_ep->num)
 		return 0;
@@ -2105,7 +2105,7 @@ found:
 	link_trb = priv_req->trb;
 
 	/* Update ring only if removed request is on pending_req_list list */
-	if (req_on_hw_ring) {
+	if (req_on_hw_ring && link_trb) {
 		link_trb->buffer = TRB_BUFFER(priv_ep->trb_pool_dma +
 			((priv_req->end_trb + 1) * TRB_SIZE));
 		link_trb->control = (link_trb->control & TRB_CYCLE) |
@@ -2545,12 +2545,12 @@ void cdns3_gadget_exit(struct cdns3 *cdns)
 
 	priv_dev = cdns->gadget_dev;
 
-	devm_free_irq(cdns->dev, cdns->dev_irq, priv_dev);
 
 	pm_runtime_mark_last_busy(cdns->dev);
 	pm_runtime_put_autosuspend(cdns->dev);
 
 	usb_del_gadget_udc(&priv_dev->gadget);
+	devm_free_irq(cdns->dev, cdns->dev_irq, priv_dev);
 
 	cdns3_free_all_eps(priv_dev);
 

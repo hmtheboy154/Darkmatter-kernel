@@ -53,6 +53,7 @@
 #include <linux/bsearch.h>
 #include <linux/dynamic_debug.h>
 #include <linux/audit.h>
+#include <linux/efi.h>
 #include <uapi/linux/module.h>
 #include "module-internal.h"
 
@@ -88,8 +89,9 @@ EXPORT_SYMBOL_GPL(module_mutex);
 static LIST_HEAD(modules);
 
 /* Work queue for freeing init sections in success case */
-static struct work_struct init_free_wq;
-static struct llist_head init_free_list;
+static void do_free_init(struct work_struct *w);
+static DECLARE_WORK(init_free_wq, do_free_init);
+static LLIST_HEAD(init_free_list);
 
 #ifdef CONFIG_MODULES_TREE_LOOKUP
 
@@ -269,6 +271,10 @@ static void module_assert_mutex_or_preempt(void)
 
 static bool sig_enforce = IS_ENABLED(CONFIG_MODULE_SIG_FORCE);
 module_param(sig_enforce, bool_enable_only, 0644);
+/* Allow disabling module signature requirement by adding boot param */
+static bool sig_unenforce = false;
+module_param(sig_unenforce, bool_enable_only, 0644);
+
 
 /*
  * Export sig_enforce kernel cmdline parameter to allow other subsystems rely
@@ -393,6 +399,8 @@ extern const struct kernel_symbol __stop___ksymtab_unused_gpl[];
 extern const s32 __start___kcrctab_unused[];
 extern const s32 __start___kcrctab_unused_gpl[];
 #endif
+
+extern struct boot_params boot_params;
 
 #ifndef CONFIG_MODVERSIONS
 #define symversion(base, idx) NULL
@@ -1507,8 +1515,7 @@ static inline bool sect_empty(const Elf_Shdr *sect)
 }
 
 struct module_sect_attr {
-	struct module_attribute mattr;
-	char *name;
+	struct bin_attribute battr;
 	unsigned long address;
 };
 
@@ -1518,13 +1525,34 @@ struct module_sect_attrs {
 	struct module_sect_attr attrs[0];
 };
 
-static ssize_t module_sect_show(struct module_attribute *mattr,
-				struct module_kobject *mk, char *buf)
+#define MODULE_SECT_READ_SIZE (3 /* "0x", "\n" */ + (BITS_PER_LONG / 4))
+static ssize_t module_sect_read(struct file *file, struct kobject *kobj,
+				struct bin_attribute *battr,
+				char *buf, loff_t pos, size_t count)
 {
 	struct module_sect_attr *sattr =
-		container_of(mattr, struct module_sect_attr, mattr);
-	return sprintf(buf, "0x%px\n", kptr_restrict < 2 ?
-		       (void *)sattr->address : NULL);
+		container_of(battr, struct module_sect_attr, battr);
+	char bounce[MODULE_SECT_READ_SIZE + 1];
+	size_t wrote;
+
+	if (pos != 0)
+		return -EINVAL;
+
+	/*
+	 * Since we're a binary read handler, we must account for the
+	 * trailing NUL byte that sprintf will write: if "buf" is
+	 * too small to hold the NUL, or the NUL is exactly the last
+	 * byte, the read will look like it got truncated by one byte.
+	 * Since there is no way to ask sprintf nicely to not write
+	 * the NUL, we have to use a bounce buffer.
+	 */
+	wrote = scnprintf(bounce, sizeof(bounce), "0x%px\n",
+			 kallsyms_show_value(file->f_cred)
+				? (void *)sattr->address : NULL);
+	count = min(count, wrote);
+	memcpy(buf, bounce, count);
+
+	return count;
 }
 
 static void free_sect_attrs(struct module_sect_attrs *sect_attrs)
@@ -1532,7 +1560,7 @@ static void free_sect_attrs(struct module_sect_attrs *sect_attrs)
 	unsigned int section;
 
 	for (section = 0; section < sect_attrs->nsections; section++)
-		kfree(sect_attrs->attrs[section].name);
+		kfree(sect_attrs->attrs[section].battr.attr.name);
 	kfree(sect_attrs);
 }
 
@@ -1541,42 +1569,41 @@ static void add_sect_attrs(struct module *mod, const struct load_info *info)
 	unsigned int nloaded = 0, i, size[2];
 	struct module_sect_attrs *sect_attrs;
 	struct module_sect_attr *sattr;
-	struct attribute **gattr;
+	struct bin_attribute **gattr;
 
 	/* Count loaded sections and allocate structures */
 	for (i = 0; i < info->hdr->e_shnum; i++)
 		if (!sect_empty(&info->sechdrs[i]))
 			nloaded++;
 	size[0] = ALIGN(struct_size(sect_attrs, attrs, nloaded),
-			sizeof(sect_attrs->grp.attrs[0]));
-	size[1] = (nloaded + 1) * sizeof(sect_attrs->grp.attrs[0]);
+			sizeof(sect_attrs->grp.bin_attrs[0]));
+	size[1] = (nloaded + 1) * sizeof(sect_attrs->grp.bin_attrs[0]);
 	sect_attrs = kzalloc(size[0] + size[1], GFP_KERNEL);
 	if (sect_attrs == NULL)
 		return;
 
 	/* Setup section attributes. */
 	sect_attrs->grp.name = "sections";
-	sect_attrs->grp.attrs = (void *)sect_attrs + size[0];
+	sect_attrs->grp.bin_attrs = (void *)sect_attrs + size[0];
 
 	sect_attrs->nsections = 0;
 	sattr = &sect_attrs->attrs[0];
-	gattr = &sect_attrs->grp.attrs[0];
+	gattr = &sect_attrs->grp.bin_attrs[0];
 	for (i = 0; i < info->hdr->e_shnum; i++) {
 		Elf_Shdr *sec = &info->sechdrs[i];
 		if (sect_empty(sec))
 			continue;
+		sysfs_bin_attr_init(&sattr->battr);
 		sattr->address = sec->sh_addr;
-		sattr->name = kstrdup(info->secstrings + sec->sh_name,
-					GFP_KERNEL);
-		if (sattr->name == NULL)
+		sattr->battr.attr.name =
+			kstrdup(info->secstrings + sec->sh_name, GFP_KERNEL);
+		if (sattr->battr.attr.name == NULL)
 			goto out;
 		sect_attrs->nsections++;
-		sysfs_attr_init(&sattr->mattr.attr);
-		sattr->mattr.show = module_sect_show;
-		sattr->mattr.store = NULL;
-		sattr->mattr.attr.name = sattr->name;
-		sattr->mattr.attr.mode = S_IRUSR;
-		*(gattr++) = &(sattr++)->mattr.attr;
+		sattr->battr.read = module_sect_read;
+		sattr->battr.size = MODULE_SECT_READ_SIZE;
+		sattr->battr.attr.mode = 0400;
+		*(gattr++) = &(sattr++)->battr;
 	}
 	*gattr = NULL;
 
@@ -1666,7 +1693,7 @@ static void add_notes_attrs(struct module *mod, const struct load_info *info)
 			continue;
 		if (info->sechdrs[i].sh_type == SHT_NOTE) {
 			sysfs_bin_attr_init(nattr);
-			nattr->attr.name = mod->sect_attrs->attrs[loaded].name;
+			nattr->attr.name = mod->sect_attrs->attrs[loaded].battr.attr.name;
 			nattr->attr.mode = S_IRUGO;
 			nattr->size = info->sechdrs[i].sh_size;
 			nattr->private = (void *) info->sechdrs[i].sh_addr;
@@ -3544,14 +3571,6 @@ static void do_free_init(struct work_struct *w)
 	}
 }
 
-static int __init modules_wq_init(void)
-{
-	INIT_WORK(&init_free_wq, do_free_init);
-	init_llist_head(&init_free_list);
-	return 0;
-}
-module_init(modules_wq_init);
-
 /*
  * This is where the real work happens.
  *
@@ -4391,7 +4410,7 @@ static int modules_open(struct inode *inode, struct file *file)
 
 	if (!err) {
 		struct seq_file *m = file->private_data;
-		m->private = kallsyms_show_value() ? NULL : (void *)8ul;
+		m->private = kallsyms_show_value(file->f_cred) ? NULL : (void *)8ul;
 	}
 
 	return err;
@@ -4407,6 +4426,20 @@ static const struct file_operations proc_modules_operations = {
 static int __init proc_modules_init(void)
 {
 	proc_create("modules", 0, NULL, &proc_modules_operations);
+
+#ifdef CONFIG_MODULE_SIG_FORCE
+	switch (boot_params.secure_boot) {
+	case efi_secureboot_mode_unset:
+	case efi_secureboot_mode_unknown:
+	case efi_secureboot_mode_disabled:
+		/*
+		 * sig_unenforce is only applied if SecureBoot is not
+		 * enabled.
+		 */
+		sig_enforce = !sig_unenforce;
+	}
+#endif
+
 	return 0;
 }
 module_init(proc_modules_init);

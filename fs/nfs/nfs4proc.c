@@ -774,6 +774,14 @@ static void nfs4_slot_sequence_acked(struct nfs4_slot *slot,
 	slot->seq_nr_last_acked = seqnr;
 }
 
+static void nfs4_probe_sequence(struct nfs_client *client, const struct cred *cred,
+				struct nfs4_slot *slot)
+{
+	struct rpc_task *task = _nfs41_proc_sequence(client, cred, slot, true);
+	if (!IS_ERR(task))
+		rpc_put_task_async(task);
+}
+
 static int nfs41_sequence_process(struct rpc_task *task,
 		struct nfs4_sequence_res *res)
 {
@@ -790,6 +798,7 @@ static int nfs41_sequence_process(struct rpc_task *task,
 		goto out;
 
 	session = slot->table->session;
+	clp = session->clp;
 
 	trace_nfs4_sequence_done(session, res);
 
@@ -804,7 +813,6 @@ static int nfs41_sequence_process(struct rpc_task *task,
 		nfs4_slot_sequence_acked(slot, slot->seq_nr);
 		/* Update the slot's sequence and clientid lease timer */
 		slot->seq_done = 1;
-		clp = session->clp;
 		do_renew_lease(clp, res->sr_timestamp);
 		/* Check sequence flags */
 		nfs41_handle_sequence_flag_errors(clp, res->sr_status_flags,
@@ -852,10 +860,18 @@ static int nfs41_sequence_process(struct rpc_task *task,
 		/*
 		 * Were one or more calls using this slot interrupted?
 		 * If the server never received the request, then our
-		 * transmitted slot sequence number may be too high.
+		 * transmitted slot sequence number may be too high. However,
+		 * if the server did receive the request then it might
+		 * accidentally give us a reply with a mismatched operation.
+		 * We can sort this out by sending a lone sequence operation
+		 * to the server on the same slot.
 		 */
 		if ((s32)(slot->seq_nr - slot->seq_nr_last_acked) > 1) {
 			slot->seq_nr--;
+			if (task->tk_msg.rpc_proc != &nfs4_procedures[NFSPROC4_CLNT_SEQUENCE]) {
+				nfs4_probe_sequence(clp, task->tk_msg.rpc_cred, slot);
+				res->sr_slot = NULL;
+			}
 			goto retry_nowait;
 		}
 		/*
@@ -1499,19 +1515,6 @@ static void nfs_state_log_update_open_stateid(struct nfs4_state *state)
 		wake_up_all(&state->waitq);
 }
 
-static void nfs_state_log_out_of_order_open_stateid(struct nfs4_state *state,
-		const nfs4_stateid *stateid)
-{
-	u32 state_seqid = be32_to_cpu(state->open_stateid.seqid);
-	u32 stateid_seqid = be32_to_cpu(stateid->seqid);
-
-	if (stateid_seqid == state_seqid + 1U ||
-	    (stateid_seqid == 1U && state_seqid == 0xffffffffU))
-		nfs_state_log_update_open_stateid(state);
-	else
-		set_bit(NFS_STATE_CHANGE_WAIT, &state->flags);
-}
-
 static void nfs_test_and_clear_all_open_stateid(struct nfs4_state *state)
 {
 	struct nfs_client *clp = state->owner->so_server->nfs_client;
@@ -1537,21 +1540,19 @@ static void nfs_test_and_clear_all_open_stateid(struct nfs4_state *state)
  * i.e. The stateid seqids have to be initialised to 1, and
  * are then incremented on every state transition.
  */
-static bool nfs_need_update_open_stateid(struct nfs4_state *state,
+static bool nfs_stateid_is_sequential(struct nfs4_state *state,
 		const nfs4_stateid *stateid)
 {
-	if (test_bit(NFS_OPEN_STATE, &state->flags) == 0 ||
-	    !nfs4_stateid_match_other(stateid, &state->open_stateid)) {
+	if (test_bit(NFS_OPEN_STATE, &state->flags)) {
+		/* The common case - we're updating to a new sequence number */
+		if (nfs4_stateid_match_other(stateid, &state->open_stateid) &&
+			nfs4_stateid_is_next(&state->open_stateid, stateid)) {
+			return true;
+		}
+	} else {
+		/* This is the first OPEN in this generation */
 		if (stateid->seqid == cpu_to_be32(1))
-			nfs_state_log_update_open_stateid(state);
-		else
-			set_bit(NFS_STATE_CHANGE_WAIT, &state->flags);
-		return true;
-	}
-
-	if (nfs4_stateid_is_newer(stateid, &state->open_stateid)) {
-		nfs_state_log_out_of_order_open_stateid(state, stateid);
-		return true;
+			return true;
 	}
 	return false;
 }
@@ -1625,16 +1626,16 @@ static void nfs_set_open_stateid_locked(struct nfs4_state *state,
 	int status = 0;
 	for (;;) {
 
-		if (!nfs_need_update_open_stateid(state, stateid))
-			return;
-		if (!test_bit(NFS_STATE_CHANGE_WAIT, &state->flags))
+		if (nfs_stateid_is_sequential(state, stateid))
 			break;
+
 		if (status)
 			break;
 		/* Rely on seqids for serialisation with NFSv4.0 */
 		if (!nfs4_has_session(NFS_SERVER(state->inode)->nfs_client))
 			break;
 
+		set_bit(NFS_STATE_CHANGE_WAIT, &state->flags);
 		prepare_to_wait(&state->waitq, &wait, TASK_KILLABLE);
 		/*
 		 * Ensure we process the state changes in the same order
@@ -1645,6 +1646,7 @@ static void nfs_set_open_stateid_locked(struct nfs4_state *state,
 		spin_unlock(&state->owner->so_lock);
 		rcu_read_unlock();
 		trace_nfs4_open_stateid_update_wait(state->inode, stateid, 0);
+
 		if (!signal_pending(current)) {
 			if (schedule_timeout(5*HZ) == 0)
 				status = -EAGAIN;
@@ -3241,8 +3243,10 @@ static int _nfs4_do_setattr(struct inode *inode,
 
 	/* Servers should only apply open mode checks for file size changes */
 	truncate = (arg->iap->ia_valid & ATTR_SIZE) ? true : false;
-	if (!truncate)
+	if (!truncate) {
+		nfs4_inode_make_writeable(inode);
 		goto zero_stateid;
+	}
 
 	if (nfs4_copy_delegation_stateid(inode, FMODE_WRITE, &arg->stateid, &delegation_cred)) {
 		/* Use that stateid */
@@ -3379,7 +3383,8 @@ static bool nfs4_refresh_open_old_stateid(nfs4_stateid *dst,
 	__be32 seqid_open;
 	u32 dst_seqid;
 	bool ret;
-	int seq;
+	int seq, status = -EAGAIN;
+	DEFINE_WAIT(wait);
 
 	for (;;) {
 		ret = false;
@@ -3391,15 +3396,41 @@ static bool nfs4_refresh_open_old_stateid(nfs4_stateid *dst,
 				continue;
 			break;
 		}
+
+		write_seqlock(&state->seqlock);
 		seqid_open = state->open_stateid.seqid;
-		if (read_seqretry(&state->seqlock, seq))
-			continue;
 
 		dst_seqid = be32_to_cpu(dst->seqid);
-		if ((s32)(dst_seqid - be32_to_cpu(seqid_open)) >= 0)
-			dst->seqid = cpu_to_be32(dst_seqid + 1);
-		else
+
+		/* Did another OPEN bump the state's seqid?  try again: */
+		if ((s32)(be32_to_cpu(seqid_open) - dst_seqid) > 0) {
 			dst->seqid = seqid_open;
+			write_sequnlock(&state->seqlock);
+			ret = true;
+			break;
+		}
+
+		/* server says we're behind but we haven't seen the update yet */
+		set_bit(NFS_STATE_CHANGE_WAIT, &state->flags);
+		prepare_to_wait(&state->waitq, &wait, TASK_KILLABLE);
+		write_sequnlock(&state->seqlock);
+		trace_nfs4_close_stateid_update_wait(state->inode, dst, 0);
+
+		if (signal_pending(current))
+			status = -EINTR;
+		else
+			if (schedule_timeout(5*HZ) != 0)
+				status = 0;
+
+		finish_wait(&state->waitq, &wait);
+
+		if (!status)
+			continue;
+		if (status == -EINTR)
+			break;
+
+		/* we slept the whole 5 seconds, we must have lost a seqid */
+		dst->seqid = cpu_to_be32(dst_seqid + 1);
 		ret = true;
 		break;
 	}
@@ -5795,8 +5826,6 @@ static int _nfs4_get_security_label(struct inode *inode, void *buf,
 		return ret;
 	if (!(fattr.valid & NFS_ATTR_FATTR_V4_SECURITY_LABEL))
 		return -ENOENT;
-	if (buflen < label.len)
-		return -ERANGE;
 	return 0;
 }
 
@@ -7218,7 +7247,12 @@ int nfs4_lock_delegation_recall(struct file_lock *fl, struct nfs4_state *state, 
 	err = nfs4_set_lock_state(state, fl);
 	if (err != 0)
 		return err;
-	err = _nfs4_do_setlk(state, F_SETLK, fl, NFS_LOCK_NEW);
+	do {
+		err = _nfs4_do_setlk(state, F_SETLK, fl, NFS_LOCK_NEW);
+		if (err != -NFS4ERR_DELAY)
+			break;
+		ssleep(1);
+	} while (err == -NFS4ERR_DELAY);
 	return nfs4_handle_delegation_recall_error(server, state, stateid, fl, err);
 }
 
@@ -7825,9 +7859,11 @@ int nfs4_proc_secinfo(struct inode *dir, const struct qstr *name,
  * both PNFS and NON_PNFS flags set, and not having one of NON_PNFS, PNFS, or
  * DS flags set.
  */
-static int nfs4_check_cl_exchange_flags(u32 flags)
+static int nfs4_check_cl_exchange_flags(u32 flags, u32 version)
 {
-	if (flags & ~EXCHGID4_FLAG_MASK_R)
+	if (version >= 2 && (flags & ~EXCHGID4_2_FLAG_MASK_R))
+		goto out_inval;
+	else if (version < 2 && (flags & ~EXCHGID4_FLAG_MASK_R))
 		goto out_inval;
 	if ((flags & EXCHGID4_FLAG_USE_PNFS_MDS) &&
 	    (flags & EXCHGID4_FLAG_USE_NON_PNFS))
@@ -7870,7 +7906,7 @@ nfs4_bind_one_conn_to_session_done(struct rpc_task *task, void *calldata)
 }
 
 static const struct rpc_call_ops nfs4_bind_one_conn_to_session_ops = {
-	.rpc_call_done =  &nfs4_bind_one_conn_to_session_done,
+	.rpc_call_done =  nfs4_bind_one_conn_to_session_done,
 };
 
 /*
@@ -8240,7 +8276,8 @@ static int _nfs4_proc_exchange_id(struct nfs_client *clp, const struct cred *cre
 	if (status  != 0)
 		goto out;
 
-	status = nfs4_check_cl_exchange_flags(resp->flags);
+	status = nfs4_check_cl_exchange_flags(resp->flags,
+			clp->cl_mvops->minor_version);
 	if (status  != 0)
 		goto out;
 

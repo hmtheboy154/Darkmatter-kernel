@@ -2183,7 +2183,11 @@ int shmem_lock(struct file *file, int lock, struct user_struct *user)
 	struct shmem_inode_info *info = SHMEM_I(inode);
 	int retval = -ENOMEM;
 
-	spin_lock_irq(&info->lock);
+	/*
+	 * What serializes the accesses to info->flags?
+	 * ipc_lock_object() when called from shmctl_do_lock(),
+	 * no serialization needed when called from shm_destroy().
+	 */
 	if (lock && !(info->flags & VM_LOCKED)) {
 		if (!user_shm_lock(inode->i_size, user))
 			goto out_nomem;
@@ -2198,7 +2202,6 @@ int shmem_lock(struct file *file, int lock, struct user_struct *user)
 	retval = 0;
 
 out_nomem:
-	spin_unlock_irq(&info->lock);
 	return retval;
 }
 
@@ -4202,6 +4205,7 @@ int shmem_zero_setup(struct vm_area_struct *vma)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(shmem_zero_setup);
 
 /**
  * shmem_read_mapping_page_gfp - read into page cache, using specified page allocation flags.

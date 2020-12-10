@@ -43,6 +43,8 @@
 #include <linux/sched/debug.h>
 #include <linux/slab.h>
 #include <linux/compat.h>
+#include <linux/random.h>
+#include <linux/freezer.h>
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
@@ -522,8 +524,8 @@ static int calc_wheel_index(unsigned long expires, unsigned long clk)
 		 * Force expire obscene large timeouts to expire at the
 		 * capacity limit of the wheel.
 		 */
-		if (expires >= WHEEL_TIMEOUT_CUTOFF)
-			expires = WHEEL_TIMEOUT_MAX;
+		if (delta >= WHEEL_TIMEOUT_CUTOFF)
+			expires = clk + WHEEL_TIMEOUT_MAX;
 
 		idx = calc_index(expires, LVL_DEPTH - 1);
 	}
@@ -585,7 +587,15 @@ trigger_dyntick_cpu(struct timer_base *base, struct timer_list *timer)
 	 * Set the next expiry time and kick the CPU so it can reevaluate the
 	 * wheel:
 	 */
-	base->next_expiry = timer->expires;
+	if (time_before(timer->expires, base->clk)) {
+		/*
+		 * Prevent from forward_timer_base() moving the base->clk
+		 * backward
+		 */
+		base->next_expiry = base->clk;
+	} else {
+		base->next_expiry = timer->expires;
+	}
 	wake_up_nohz_cpu(base->cpu);
 }
 
@@ -897,10 +907,13 @@ static inline void forward_timer_base(struct timer_base *base)
 	 * If the next expiry value is > jiffies, then we fast forward to
 	 * jiffies otherwise we forward to the next expiry value.
 	 */
-	if (time_after(base->next_expiry, jnow))
+	if (time_after(base->next_expiry, jnow)) {
 		base->clk = jnow;
-	else
+	} else {
+		if (WARN_ON_ONCE(time_before(base->next_expiry, base->clk)))
+			return;
 		base->clk = base->next_expiry;
+	}
 #endif
 }
 
@@ -1889,6 +1902,18 @@ signed long __sched schedule_timeout(signed long timeout)
 
 	expire = timeout + jiffies;
 
+#ifdef CONFIG_HIGH_RES_TIMERS
+	if (timeout == 1 && hrtimer_resolution < NSEC_PER_SEC / HZ) {
+		/*
+		 * Special case 1 as being a request for the minimum timeout
+		 * and use highres timers to timeout after 1ms to workaround
+		 * the granularity of low Hz tick timers.
+		 */
+		if (!schedule_min_hrtimeout())
+			return 0;
+		goto out_timeout;
+	}
+#endif
 	timer.task = current;
 	timer_setup_on_stack(&timer.timer, process_timeout, 0);
 	__mod_timer(&timer.timer, expire, 0);
@@ -1897,10 +1922,10 @@ signed long __sched schedule_timeout(signed long timeout)
 
 	/* Remove the timer from the object tracker */
 	destroy_timer_on_stack(&timer.timer);
-
+out_timeout:
 	timeout = expire - jiffies;
 
- out:
+out:
 	return timeout < 0 ? 0 : timeout;
 }
 EXPORT_SYMBOL(schedule_timeout);
@@ -2042,7 +2067,19 @@ void __init init_timers(void)
  */
 void msleep(unsigned int msecs)
 {
-	unsigned long timeout = msecs_to_jiffies(msecs) + 1;
+	int jiffs = msecs_to_jiffies(msecs);
+	unsigned long timeout;
+
+	/*
+	 * Use high resolution timers where the resolution of tick based
+	 * timers is inadequate.
+	 */
+	if (jiffs < 5 && hrtimer_resolution < NSEC_PER_SEC / HZ && !pm_freezing) {
+		while (msecs)
+			msecs = schedule_msec_hrtimeout_uninterruptible(msecs);
+		return;
+	}
+	timeout = jiffs + 1;
 
 	while (timeout)
 		timeout = schedule_timeout_uninterruptible(timeout);
@@ -2056,7 +2093,15 @@ EXPORT_SYMBOL(msleep);
  */
 unsigned long msleep_interruptible(unsigned int msecs)
 {
-	unsigned long timeout = msecs_to_jiffies(msecs) + 1;
+	int jiffs = msecs_to_jiffies(msecs);
+	unsigned long timeout;
+
+	if (jiffs < 5 && hrtimer_resolution < NSEC_PER_SEC / HZ && !pm_freezing) {
+		while (msecs && !signal_pending(current))
+			msecs = schedule_msec_hrtimeout_interruptible(msecs);
+		return msecs;
+	}
+	timeout = jiffs + 1;
 
 	while (timeout && !signal_pending(current))
 		timeout = schedule_timeout_interruptible(timeout);

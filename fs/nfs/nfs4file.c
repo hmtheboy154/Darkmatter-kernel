@@ -109,6 +109,7 @@ static int
 nfs4_file_flush(struct file *file, fl_owner_t id)
 {
 	struct inode	*inode = file_inode(file);
+	errseq_t since;
 
 	dprintk("NFS: flush(%pD2)\n", file);
 
@@ -124,7 +125,9 @@ nfs4_file_flush(struct file *file, fl_owner_t id)
 		return filemap_fdatawrite(file->f_mapping);
 
 	/* Flush writes to the server and return any errors */
-	return nfs_wb_all(inode);
+	since = filemap_sample_wb_err(file->f_mapping);
+	nfs_wb_all(inode);
+	return filemap_check_wb_err(file->f_mapping, since);
 }
 
 #ifdef CONFIG_NFS_V4_2
@@ -135,7 +138,8 @@ static ssize_t __nfs4_copy_file_range(struct file *file_in, loff_t pos_in,
 	/* Only offload copy if superblock is the same */
 	if (file_inode(file_in)->i_sb != file_inode(file_out)->i_sb)
 		return -EXDEV;
-	if (!nfs_server_capable(file_inode(file_out), NFS_CAP_COPY))
+	if (!nfs_server_capable(file_inode(file_out), NFS_CAP_COPY) ||
+	    !nfs_server_capable(file_inode(file_in), NFS_CAP_COPY))
 		return -EOPNOTSUPP;
 	if (file_inode(file_in) == file_inode(file_out))
 		return -EOPNOTSUPP;

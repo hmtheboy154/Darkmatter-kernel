@@ -33,6 +33,7 @@
 #include <linux/workqueue.h>
 #include <linux/uuid.h>
 #include <linux/nospec.h>
+#include <linux/vmalloc.h>
 
 #define IPMI_DRIVER_VERSION "39.2"
 
@@ -1170,7 +1171,7 @@ static void free_user_work(struct work_struct *work)
 					      remove_work);
 
 	cleanup_srcu_struct(&user->release_barrier);
-	kfree(user);
+	vfree(user);
 }
 
 int ipmi_create_user(unsigned int          if_num,
@@ -1202,7 +1203,7 @@ int ipmi_create_user(unsigned int          if_num,
 	if (rv)
 		return rv;
 
-	new_user = kmalloc(sizeof(*new_user), GFP_KERNEL);
+	new_user = vzalloc(sizeof(*new_user));
 	if (!new_user)
 		return -ENOMEM;
 
@@ -1249,7 +1250,7 @@ int ipmi_create_user(unsigned int          if_num,
 
 out_kfree:
 	srcu_read_unlock(&ipmi_interfaces_srcu, index);
-	kfree(new_user);
+	vfree(new_user);
 	return rv;
 }
 EXPORT_SYMBOL(ipmi_create_user);
@@ -3556,7 +3557,7 @@ static void cleanup_smi_msgs(struct ipmi_smi *intf)
 	/* Current message first, to preserve order */
 	while (intf->curr_msg && !list_empty(&intf->waiting_rcv_msgs)) {
 		/* Wait for the message to clear out. */
-		schedule_timeout(1);
+		schedule_min_hrtimeout();
 	}
 
 	/* No need for locks, the interface is down. */

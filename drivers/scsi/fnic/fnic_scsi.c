@@ -216,7 +216,7 @@ int fnic_fw_reset_handler(struct fnic *fnic)
 
 	/* wait for io cmpl */
 	while (atomic_read(&fnic->in_flight))
-		schedule_timeout(msecs_to_jiffies(1));
+		schedule_msec_hrtimeout((1));
 
 	spin_lock_irqsave(&fnic->wq_copy_lock[0], flags);
 
@@ -1027,7 +1027,8 @@ static void fnic_fcpio_icmnd_cmpl_handler(struct fnic *fnic,
 		atomic64_inc(&fnic_stats->io_stats.io_completions);
 
 
-	io_duration_time = jiffies_to_msecs(jiffies) - jiffies_to_msecs(io_req->start_time);
+	io_duration_time = jiffies_to_msecs(jiffies) -
+						jiffies_to_msecs(start_time);
 
 	if(io_duration_time <= 10)
 		atomic64_inc(&fnic_stats->io_stats.io_btw_0_to_10_msec);
@@ -2276,7 +2277,7 @@ static int fnic_clean_pending_aborts(struct fnic *fnic,
 		}
 	}
 
-	schedule_timeout(msecs_to_jiffies(2 * fnic->config.ed_tov));
+	schedule_msec_hrtimeout((2 * fnic->config.ed_tov));
 
 	/* walk again to check, if IOs are still pending in fw */
 	if (fnic_is_abts_pending(fnic, lr_sc))

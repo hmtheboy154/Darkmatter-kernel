@@ -85,6 +85,8 @@ static void vunmap_pmd_range(pud_t *pud, unsigned long addr, unsigned long end)
 		if (pmd_none_or_clear_bad(pmd))
 			continue;
 		vunmap_pte_range(pmd, addr, next);
+
+		cond_resched();
 	} while (pmd++, addr = next, addr != end);
 }
 
@@ -1964,6 +1966,7 @@ int map_kernel_range_noflush(unsigned long addr, unsigned long size,
 {
 	return vmap_page_range_noflush(addr, addr + size, prot, pages);
 }
+EXPORT_SYMBOL_GPL(map_kernel_range_noflush);
 
 /**
  * unmap_kernel_range_noflush - unmap kernel VM area
@@ -2105,6 +2108,7 @@ struct vm_struct *get_vm_area(unsigned long size, unsigned long flags)
 				  NUMA_NO_NODE, GFP_KERNEL,
 				  __builtin_return_address(0));
 }
+EXPORT_SYMBOL_GPL(get_vm_area);
 
 struct vm_struct *get_vm_area_caller(unsigned long size, unsigned long flags,
 				const void *caller)

@@ -1574,6 +1574,9 @@ static void process_csb(struct intel_engine_cs *engine)
 			if (!inject_preempt_hang(execlists))
 				ring_set_paused(engine, 0);
 
+			/* XXX Magic delay for tgl */
+			ENGINE_POSTING_READ(engine, RING_CONTEXT_STATUS_PTR);
+
 			WRITE_ONCE(execlists->pending[0], NULL);
 			break;
 
@@ -3751,6 +3754,7 @@ intel_execlists_create_virtual(struct i915_gem_context *ctx,
 	intel_engine_init_active(&ve->base, ENGINE_VIRTUAL);
 
 	intel_engine_init_execlists(&ve->base);
+	ve->base.breadcrumbs.irq_armed = true; /* fake HW, used for irq_work */
 
 	ve->base.cops = &virtual_context_ops;
 	ve->base.request_alloc = execlists_request_alloc;
