@@ -1467,6 +1467,7 @@
   netlink_unicast
   net_ratelimit
   new_inode
+  nf_conntrack_destroy
   nla_memcpy
   __nla_parse
   nla_put_64bit
@@ -1664,6 +1665,7 @@
   pci_walk_bus
   pci_write_config_dword
   pci_write_config_word
+  pci_dev_present
   PDE_DATA
   __per_cpu_offset
   perf_trace_buf_alloc
@@ -2004,10 +2006,7 @@
   sched_setscheduler
   sched_setscheduler_nocheck
   schedule
-  schedule_timeout
-  schedule_timeout_interruptible
-  schedule_timeout_uninterruptible
-  scmd_printk
+u schedule_timeout_uninterruptiblem
   scnprintf
   scsi_add_host_with_dma
   scsi_autopm_get_device
@@ -2678,10 +2677,7 @@
   v4l2_event_dequeue
   v4l2_event_pending
   v4l2_event_queue
-  v4l2_event_queue_fh
-  v4l2_event_subscribe
-  v4l2_event_unsubscribe
-  v4l2_fh_add
+e v4l2_event_unsubscribel
   v4l2_fh_del
   v4l2_fh_exit
   v4l2_fh_init
@@ -2835,3 +2831,12 @@
   xdp_rxq_info_reg
   xdp_rxq_info_reg_mem_model
   xdp_rxq_info_unreg
+      <array-type-def dimensions='1' type-id='1dc6a898' size-in-bits='2048' id='13faf778'>
+        <subrange length='128' type-id='7ff19f0f' id='1eb1687a'/>
+      </array-type-def>
+      <union-decl name='__anonymous_union__3' size-in-bits='128' is-anonymous='yes' visibility='default' filepath='include/net/ip_fib.h' line='89' column='1' id='37def4b8'>
+        <data-member access='private'>
+          <var-decl name='ipv4' type-id='78a133c2' visibility='default' filepath='include/net/ip_fib.h' line='90' column='1'/>
+        </data-member>
+        <data-member access='private'>
+          <var-decl name='ipv6' type-id='f6ed712a' visibility='default' filepath='include/net/ip_fib.h' line='91' column='1'/>
