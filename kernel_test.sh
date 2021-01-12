@@ -15,6 +15,34 @@ echo -e "\t\t\t\t Starting syscall_user_dispatch:sud_benchmark Tests"
 ./sud_benchmark 
 echo -e "\t\t\t\t Completed syscall_user_dispatch:sud_benchmark Tests"
 echo "========================================================================" 
+echo -e "\t\t\t\t Build Perf benchmark"
+echo "========================================================================" 
+cd /mnt
+make headers_install INSTALL_HDR_PATH=/usr
+echo "grep FUTEX_32"
+grep FUTEX_32 /usr/include/linux/futex.h
+apt-get update && apt-get install -y elfutils libunwind-dev binutils numactl libaudit-dev coreutils libelf-dev libzstd-dev libcap-dev
+apt-get update && apt-get install -y flex bison build-essential 
+apt-get update && apt-get install -y --fix-missing libiberty-dev libbabeltrace-ctf-dev libperl-dev libslang2-dev libssl-dev systemtap-sdt-dev libdw-dev
+cd /mnt/tools/perf/ && make
+
+echo -e "\t\t\t\t Completed perf benchmark build" 
+echo "========================================================================" 
+echo -e "\t\t\t\t Run Perf benchmark"
+echo "========================================================================" 
+
+./perf bench futex2 hash -s
+./perf bench futex2 hash -s -S
+./perf bench -r 50 futex2 wake -s
+./perf bench -r 50 futex2 wake -s -S
+./perf bench -r 50 futex2 wake-parallel -s
+./perf bench -r 50 futex2 wake-parallel -s -S
+./perf bench -r 50 futex2 wake -s -t 1000
+./perf bench -r 50 futex2 wake -s -S  -t 1000
+./perf bench -r 50 futex2 wake-parallel -s -t 1000
+./perf bench -r 50 futex2 wake-parallel -s -S -t 1000
+
+echo -e "\t\t\t\t Completed perf run" 
 }
 
 start_test 2>&1 | tee -a /mnt/kernel_results.log
