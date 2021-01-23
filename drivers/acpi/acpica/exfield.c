@@ -97,7 +97,9 @@ acpi_ex_read_data_from_field(struct acpi_walk_state *walk_state,
 	acpi_status status;
 	union acpi_operand_object *buffer_desc;
 	void *buffer;
-	u32 buffer_length;
+	u32 function;
+	u16 accessor_type;
+	u8 field_flags;
 
 	ACPI_FUNCTION_TRACE_PTR(ex_read_data_from_field, obj_desc);
 
@@ -145,12 +147,17 @@ acpi_ex_read_data_from_field(struct acpi_walk_state *walk_state,
 	 *
 	 * Note: Field.length is in bits.
 	 */
-	buffer_length =
-	    (acpi_size)ACPI_ROUND_BITS_UP_TO_BYTES(obj_desc->field.bit_length);
+	length =
+	    (acpi_size)ACPI_ROUND_BITS_UP_TO_BYTES(obj_desc->common_field.bit_length);
+	field_flags = obj_desc->common_field.field_flags;
 
-	if (buffer_length > acpi_gbl_integer_byte_width) {
+	if (length > acpi_gbl_integer_byte_width ||
+	    (field_flags & AML_FIELD_ACCESS_TYPE_MASK) == AML_FIELD_ACCESS_BUFFER) {
 
-		/* Field is too large for an Integer, create a Buffer instead */
+		/*
+		 * Field is either too large for an Integer, or a actually of type
+		 * buffer, so create a Buffer.
+		 */
 
 		buffer_desc = acpi_ut_create_buffer_object(buffer_length);
 		if (!buffer_desc) {
@@ -252,7 +259,69 @@ acpi_ex_write_data_to_field(union acpi_operand_object *source_desc,
 		}
 	} else if ((obj_desc->common.type == ACPI_TYPE_LOCAL_REGION_FIELD) &&
 		   (obj_desc->field.region_obj->region.space_id ==
-		    ACPI_ADR_SPACE_GPIO)) {
+		    ACPI_ADR_SPACE_SMBUS
+		    || obj_desc->field.region_obj->region.space_id ==
+		    ACPI_ADR_SPACE_GSBUS
+		    || obj_desc->field.region_obj->region.space_id ==
+		    ACPI_ADR_SPACE_IPMI)) {
+		/*
+		 * This is an SMBus, GSBus or IPMI write. We will bypass the entire
+		 * field mechanism and handoff the buffer directly to the handler.
+		 * For these address spaces, the buffer is bi-directional; on a
+		 * write, return data is returned in the same buffer.
+		 *
+		 * Source must be a buffer of sufficient size:
+		 * ACPI_SMBUS_BUFFER_SIZE, ACPI_GSBUS_BUFFER_SIZE, or
+		 * ACPI_IPMI_BUFFER_SIZE.
+		 *
+		 * Note: SMBus and GSBus protocol type is passed in upper 16-bits
+		 * of Function
+		 */
+		if (source_desc->common.type != ACPI_TYPE_BUFFER) {
+			ACPI_ERROR((AE_INFO,
+				    "SMBus/IPMI/GenericSerialBus write requires "
+				    "Buffer, found type %s",
+				    acpi_ut_get_object_type_name(source_desc)));
+
+			return_ACPI_STATUS(AE_AML_OPERAND_TYPE);
+		}
+
+		if (obj_desc->field.region_obj->region.space_id ==
+		    ACPI_ADR_SPACE_SMBUS) {
+			length = ACPI_SMBUS_BUFFER_SIZE;
+			function =
+			    ACPI_WRITE | (obj_desc->field.attribute << 16);
+		} else if (obj_desc->field.region_obj->region.space_id ==
+			   ACPI_ADR_SPACE_GSBUS) {
+			accessor_type = obj_desc->field.attribute;
+			length = source_desc->buffer.length;
+			function = ACPI_WRITE | (accessor_type << 16);
+		} else {	/* IPMI */
+
+			length = ACPI_IPMI_BUFFER_SIZE;
+			function = ACPI_WRITE;
+		}
+
+		if (source_desc->buffer.length < length) {
+			ACPI_ERROR((AE_INFO,
+				    "SMBus/IPMI/GenericSerialBus write requires "
+				    "Buffer of length %u, found length %u",
+				    length, source_desc->buffer.length));
+
+			return_ACPI_STATUS(AE_AML_BUFFER_LIMIT);
+		}
+
+		/* Create the bi-directional buffer */
+
+		buffer_desc = acpi_ut_create_buffer_object(length);
+		if (!buffer_desc) {
+			return_ACPI_STATUS(AE_NO_MEMORY);
+		}
+
+		buffer = buffer_desc->buffer.pointer;
+		memcpy(buffer, source_desc->buffer.pointer, length);
+
+		/* Lock entire transaction if requested */
 
 		/* General Purpose I/O */
 

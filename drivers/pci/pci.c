@@ -793,6 +793,11 @@ static inline bool platform_pci_need_resume(struct pci_dev *dev)
 	return pci_platform_pm ? pci_platform_pm->need_resume(dev) : false;
 }
 
+static inline bool platform_pci_bridge_d3(struct pci_dev *dev)
+{
+	return pci_platform_pm ? pci_platform_pm->bridge_d3(dev) : false;
+}
+
 /**
  * pci_raw_set_power_state - Use PCI PM registers to set the power state of
  *                           given PCI device
@@ -1515,9 +1520,7 @@ static int do_pci_enable_device(struct pci_dev *dev, int bars)
 	u16 cmd;
 	u8 pin;
 
-	err = pci_set_power_state(dev, PCI_D0);
-	if (err < 0 && err != -EIO)
-		return err;
+	pci_power_up(dev);
 
 	bridge = pci_upstream_bridge(dev);
 	if (bridge)
@@ -2151,10 +2154,13 @@ static int __pci_enable_wake(struct pci_dev *dev, pci_power_t state, bool enable
 	int ret = 0;
 
 	/*
-	 * Bridges can only signal wakeup on behalf of subordinate devices,
-	 * but that is set up elsewhere, so skip them.
+	 * Bridges that are not power-manageable directly only signal
+	 * wakeup on behalf of subordinate devices which is set up
+	 * elsewhere, so skip them. However, bridges that are
+	 * power-manageable may signal wakeup for themselves (for example,
+	 * on a hotplug event) and they need to be covered here.
 	 */
-	if (pci_has_subordinate(dev))
+	if (!pci_power_manageable(dev))
 		return 0;
 
 	/* Don't do the same thing twice in a row for one device. */
@@ -2515,6 +2521,32 @@ static const struct dmi_system_id bridge_d3_blacklist[] = {
 	{ }
 };
 
+static const struct dmi_system_id bridge_d3_hotplug_whitelist[] = {
+#ifdef CONFIG_X86
+	{
+		/*
+		 * Microsoft Surface Books have a hot-plug root port for the
+		 * discrete GPU (the device containing it can be detached form
+		 * the top-part, containing the cpu).
+		 *
+		 * If this discrete GPU is not transitioned into D3cold for
+		 * suspend, the device will become notably warm and also
+		 * consume a lot more power than desirable.
+		 *
+		 * We assume that since those devices have been confirmed
+		 * working with D3, future Surface devices will too. So let's
+		 * keep this match generic.
+		 */
+		.ident = "Microsoft Surface",
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Microsoft Corporation"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Surface"),
+		},
+	},
+#endif
+	{ }
+};
+
 /**
  * pci_bridge_d3_possible - Is it possible to put the bridge into D3
  * @bridge: Bridge to check
@@ -2548,13 +2580,18 @@ bool pci_bridge_d3_possible(struct pci_dev *bridge)
 		if (bridge->is_thunderbolt)
 			return true;
 
+		/* Platform might know better if the bridge supports D3 */
+		if (platform_pci_bridge_d3(bridge))
+			return true;
+
 		/*
 		 * Hotplug ports handled natively by the OS were not validated
 		 * by vendors for runtime D3 at least until 2018 because there
-		 * was no OS support.
+		 * was no OS support. Explicitly whitelist systems that have
+		 * been confirmed working.
 		 */
 		if (bridge->is_hotplug_bridge)
-			return false;
+			return dmi_check_system(bridge_d3_hotplug_whitelist);
 
 		if (dmi_check_system(bridge_d3_blacklist))
 			return false;
@@ -4526,21 +4563,42 @@ bool pcie_wait_for_link(struct pci_dev *pdev, bool active)
 	bool ret;
 	u16 lnk_status;
 
+	/*
+	 * Some controllers might not implement link active reporting. In this
+	 * case, we wait for 1000 + 100 ms.
+	 */
+	if (!pdev->link_active_reporting) {
+		msleep(1100);
+		return true;
+	}
+
+	/*
+	 * PCIe r4.0 sec 6.6.1, a component must enter LTSSM Detect within 20ms,
+	 * after which we should expect an link active if the reset was
+	 * successful. If so, software must wait a minimum 100ms before sending
+	 * configuration requests to devices downstream this port.
+	 *
+	 * If the link fails to activate, either the device was physically
+	 * removed or the link is permanently failed.
+	 */
+	if (active)
+		msleep(20);
 	for (;;) {
 		pcie_capability_read_word(pdev, PCI_EXP_LNKSTA, &lnk_status);
 		ret = !!(lnk_status & PCI_EXP_LNKSTA_DLLLA);
 		if (ret == active)
-			return true;
+			break;
 		if (timeout <= 0)
 			break;
 		msleep(10);
 		timeout -= 10;
 	}
-
-	pci_info(pdev, "Data Link Layer Link Active not %s in 1000 msec\n",
-		 active ? "set" : "cleared");
-
-	return false;
+	if (active && ret)
+		msleep(100);
+	else if (ret != active)
+		pci_info(pdev, "Data Link Layer Link Active not %s in 1000 msec\n",
+			active ? "set" : "cleared");
+	return ret == active;
 }
 
 void pci_reset_secondary_bus(struct pci_dev *dev)

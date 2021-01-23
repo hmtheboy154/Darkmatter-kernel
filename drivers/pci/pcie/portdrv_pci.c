@@ -45,12 +45,10 @@ __setup("pcie_ports=", pcie_port_setup);
 #ifdef CONFIG_PM
 static int pcie_port_runtime_suspend(struct device *dev)
 {
-	return to_pci_dev(dev)->bridge_d3 ? 0 : -EBUSY;
-}
+	if (!to_pci_dev(dev)->bridge_d3)
+		return -EBUSY;
 
-static int pcie_port_runtime_resume(struct device *dev)
-{
-	return 0;
+	return pcie_port_device_runtime_suspend(dev);
 }
 
 static int pcie_port_runtime_idle(struct device *dev)
@@ -73,7 +71,7 @@ static const struct dev_pm_ops pcie_portdrv_pm_ops = {
 	.restore_noirq	= pcie_port_device_resume_noirq,
 	.restore	= pcie_port_device_resume,
 	.runtime_suspend = pcie_port_runtime_suspend,
-	.runtime_resume	= pcie_port_runtime_resume,
+	.runtime_resume	= pcie_port_device_runtime_resume,
 	.runtime_idle	= pcie_port_runtime_idle,
 };
 
@@ -109,8 +107,8 @@ static int pcie_portdrv_probe(struct pci_dev *dev,
 
 	pci_save_state(dev);
 
-	dev_pm_set_driver_flags(&dev->dev, DPM_FLAG_SMART_SUSPEND |
-					   DPM_FLAG_LEAVE_SUSPENDED);
+	dev_pm_set_driver_flags(&dev->dev, DPM_FLAG_NEVER_SKIP |
+					   DPM_FLAG_SMART_SUSPEND);
 
 	if (pci_bridge_d3_possible(dev)) {
 		/*

@@ -27,11 +27,17 @@
 #include "wmm.h"
 #include "11n.h"
 #include "pcie.h"
+#include "pcie_quirks.h"
 
 #define PCIE_VERSION	"1.0"
 #define DRV_NAME        "Marvell mwifiex PCIe"
 
 static struct mwifiex_if_ops pcie_ops;
+
+static bool enable_device_dump;
+module_param(enable_device_dump, bool, 0644);
+MODULE_PARM_DESC(enable_device_dump,
+		 "enable device_dump (default: disabled)");
 
 static const struct of_device_id mwifiex_pcie_of_match_table[] = {
 	{ .compatible = "pci11ab,2b42" },
@@ -144,19 +150,13 @@ static bool mwifiex_pcie_ok_to_access_hw(struct mwifiex_adapter *adapter)
  * registered functions must have drivers with suspend and resume
  * methods. Failing that the kernel simply removes the whole card.
  *
- * If already not suspended, this function allocates and sends a host
- * sleep activate request to the firmware and turns off the traffic.
+ * This function shuts down the adapter.
  */
 static int mwifiex_pcie_suspend(struct device *dev)
 {
 	struct mwifiex_adapter *adapter;
-	struct pcie_service_card *card;
-	struct pci_dev *pdev = to_pci_dev(dev);
+	struct pcie_service_card *card = dev_get_drvdata(dev);
 
-	card = pci_get_drvdata(pdev);
-
-	/* Might still be loading firmware */
-	wait_for_completion(&card->fw_done);
 
 	adapter = card->adapter;
 	if (!adapter) {
@@ -164,22 +164,15 @@ static int mwifiex_pcie_suspend(struct device *dev)
 		return 0;
 	}
 
-	mwifiex_enable_wake(adapter);
-
-	/* Enable the Host Sleep */
-	if (!mwifiex_enable_hs(adapter)) {
+	/* Shut down SW */
+	if (mwifiex_shutdown_sw(adapter)) {
 		mwifiex_dbg(adapter, ERROR,
 			    "cmd: failed to suspend\n");
-		clear_bit(MWIFIEX_IS_HS_ENABLING, &adapter->work_flags);
-		mwifiex_disable_wake(adapter);
 		return -EFAULT;
 	}
 
-	flush_workqueue(adapter->workqueue);
-
 	/* Indicate device suspended */
 	set_bit(MWIFIEX_IS_SUSPENDED, &adapter->work_flags);
-	clear_bit(MWIFIEX_IS_HS_ENABLING, &adapter->work_flags);
 
 	return 0;
 }
@@ -189,16 +182,14 @@ static int mwifiex_pcie_suspend(struct device *dev)
  * registered functions must have drivers with suspend and resume
  * methods. Failing that the kernel simply removes the whole card.
  *
- * If already not resumed, this function turns on the traffic and
- * sends a host sleep cancel request to the firmware.
+ * If already not resumed, this function reinits the adapter.
  */
 static int mwifiex_pcie_resume(struct device *dev)
 {
 	struct mwifiex_adapter *adapter;
-	struct pcie_service_card *card;
-	struct pci_dev *pdev = to_pci_dev(dev);
+	struct pcie_service_card *card = dev_get_drvdata(dev);
+	int ret;
 
-	card = pci_get_drvdata(pdev);
 
 	if (!card->adapter) {
 		dev_err(dev, "adapter structure is not valid\n");
@@ -215,9 +206,11 @@ static int mwifiex_pcie_resume(struct device *dev)
 
 	clear_bit(MWIFIEX_IS_SUSPENDED, &adapter->work_flags);
 
-	mwifiex_cancel_hs(mwifiex_get_priv(adapter, MWIFIEX_BSS_ROLE_STA),
-			  MWIFIEX_ASYNC_CMD);
-	mwifiex_disable_wake(adapter);
+	ret = mwifiex_reinit_sw(adapter);
+	if (ret)
+		dev_err(dev, "reinit failed: %d\n", ret);
+	else
+		mwifiex_dbg(adapter, INFO, "%s, successful\n", __func__);
 
 	return 0;
 }
@@ -233,6 +226,7 @@ static int mwifiex_pcie_probe(struct pci_dev *pdev,
 					const struct pci_device_id *ent)
 {
 	struct pcie_service_card *card;
+	struct pci_dev *parent_pdev = pci_upstream_bridge(pdev);
 	int ret;
 
 	pr_debug("info: vendor=0x%4.04X device=0x%4.04X rev=%d\n",
@@ -265,11 +259,20 @@ static int mwifiex_pcie_probe(struct pci_dev *pdev,
 			return ret;
 	}
 
+	/* check quirks */
+	mwifiex_initialize_quirks(card);
+
 	if (mwifiex_add_card(card, &card->fw_done, &pcie_ops,
 			     MWIFIEX_PCIE, &pdev->dev)) {
 		pr_err("%s failed\n", __func__);
 		return -1;
 	}
+
+	/* disable bridge_d3 for Surface gen4+ devices to fix fw crashing
+	 * after suspend
+	 */
+	if (card->quirks & QUIRK_NO_BRIDGE_D3)
+		parent_pdev->bridge_d3 = false;
 
 	return 0;
 }
@@ -382,7 +385,16 @@ static void mwifiex_pcie_reset_prepare(struct pci_dev *pdev)
 	mwifiex_shutdown_sw(adapter);
 	clear_bit(MWIFIEX_IFACE_WORK_DEVICE_DUMP, &card->work_flags);
 	clear_bit(MWIFIEX_IFACE_WORK_CARD_RESET, &card->work_flags);
+
+	/* For Surface gen4+ devices, we need to put wifi into D3cold right
+	 * before performing FLR
+	 */
+	if (card->quirks & QUIRK_FW_RST_D3COLD)
+		mwifiex_pcie_reset_d3cold_quirk(pdev);
+
 	mwifiex_dbg(adapter, INFO, "%s, successful\n", __func__);
+
+	card->pci_reset_ongoing = true;
 }
 
 /*
@@ -411,6 +423,8 @@ static void mwifiex_pcie_reset_done(struct pci_dev *pdev)
 		dev_err(&pdev->dev, "reinit failed: %d\n", ret);
 	else
 		mwifiex_dbg(adapter, INFO, "%s, successful\n", __func__);
+
+	card->pci_reset_ongoing = false;
 }
 
 static const struct pci_error_handlers mwifiex_pcie_err_handler = {
@@ -2801,6 +2815,12 @@ static void mwifiex_pcie_fw_dump(struct mwifiex_adapter *adapter)
 
 static void mwifiex_pcie_device_dump_work(struct mwifiex_adapter *adapter)
 {
+	if (!enable_device_dump) {
+		mwifiex_dbg(adapter, MSG,
+			    "device_dump is disabled by module parameter\n");
+		return;
+	}
+
 	adapter->devdump_data = vzalloc(MWIFIEX_FW_DUMP_SIZE);
 	if (!adapter->devdump_data) {
 		mwifiex_dbg(adapter, ERROR,
@@ -2817,6 +2837,16 @@ static void mwifiex_pcie_device_dump_work(struct mwifiex_adapter *adapter)
 static void mwifiex_pcie_card_reset_work(struct mwifiex_adapter *adapter)
 {
 	struct pcie_service_card *card = adapter->card;
+
+	/* On Surface 3, reset_wsid method removes then re-probes card by
+	 * itself. So, need to place it here and skip performing any other
+	 * reset-related works.
+	 */
+	if (card->quirks & QUIRK_FW_RST_WSID_S3) {
+		mwifiex_pcie_reset_wsid_quirk(card->dev);
+		/* skip performing any other reset-related works */
+		return;
+	}
 
 	/* We can't afford to wait here; remove() might be waiting on us. If we
 	 * can't grab the device lock, maybe we'll get another chance later.
@@ -3012,7 +3042,19 @@ static void mwifiex_cleanup_pcie(struct mwifiex_adapter *adapter)
 	int ret;
 	u32 fw_status;
 
-	cancel_work_sync(&card->work);
+	/* Perform the cancel_work_sync() only when we're not resetting
+	 * the card. It's because that function never returns if we're
+	 * in reset path. If we're here when resetting the card, it means
+	 * that we failed to reset the card (reset failure path).
+	 */
+	if (!card->pci_reset_ongoing) {
+		mwifiex_dbg(adapter, MSG, "performing cancel_work_sync()...\n");
+		cancel_work_sync(&card->work);
+		mwifiex_dbg(adapter, MSG, "cancel_work_sync() done\n");
+	} else {
+		mwifiex_dbg(adapter, MSG,
+			    "skipped cancel_work_sync() because we're in card reset failure path\n");
+	}
 
 	ret = mwifiex_read_reg(adapter, reg->fw_status, &fw_status);
 	if (fw_status == FIRMWARE_READY_PCIE) {
