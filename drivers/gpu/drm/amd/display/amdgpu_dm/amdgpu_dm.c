@@ -9326,6 +9326,11 @@ static int dm_check_crtc_cursor(struct drm_atomic_state *state,
 			break;
 	}
 
+	if (new_underlying_state->rotation != new_cursor_state->rotation) {
+		drm_dbg_atomic(crtc->dev, "Cursor plane rotation doesn't match underlying plane\n");
+		return -EINVAL;
+	}
+
 	/* In theory we could probably support YUV cursors when the underlying
 	 * plane uses a YUV format, but there's no use-case for it yet. */
 	if (new_underlying_state->fb->format->is_yuv) {
