@@ -9326,6 +9326,13 @@ static int dm_check_crtc_cursor(struct drm_atomic_state *state,
 			break;
 	}
 
+	/* In theory we could probably support YUV cursors when the underlying
+	 * plane uses a YUV format, but there's no use-case for it yet. */
+	if (new_underlying_state->fb->format->is_yuv) {
+		drm_dbg_atomic(crtc->dev, "Cursor plane can't be used with YUV underlying plane\n");
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
