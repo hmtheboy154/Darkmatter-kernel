@@ -1058,13 +1058,20 @@
   hwspin_lock_unregister
   __hwspin_unlock
   hypervisor_kobj
+  i2c_adapter_type
   i2c_add_adapter
   i2c_add_numbered_adapter
   i2c_del_adapter
   i2c_del_driver
+  i2c_get_device_id
   i2c_get_dma_safe_msg_buf
   i2c_put_dma_safe_msg_buf
   i2c_register_driver
+  i2c_smbus_read_byte
+  i2c_smbus_write_byte
+  __i2c_smbus_xfer
+  i2c_smbus_xfer
+  __i2c_transfer
   i2c_transfer
   i2c_transfer_buffer_flags
   icc_get
@@ -1208,6 +1215,7 @@
   irq_domain_remove
   irq_domain_set_hwirq_and_chip
   irq_domain_set_info
+  irq_domain_simple_ops
   irq_domain_update_bus_token
   irq_domain_xlate_onecell
   irq_domain_xlate_twocell
@@ -2011,6 +2019,9 @@
   rtc_tm_to_time64
   rtc_update_irq
   rtc_valid_tm
+  rt_mutex_lock
+  rt_mutex_trylock
+  rt_mutex_unlock
   rtnl_is_locked
   rtnl_link_register
   rtnl_link_unregister
@@ -2854,12 +2865,7 @@ e v4l2_event_unsubscribel
   xdp_rxq_info_reg
   xdp_rxq_info_reg_mem_model
   xdp_rxq_info_unreg
-      <array-type-def dimensions='1' type-id='1dc6a898' size-in-bits='2048' id='13faf778'>
-        <subrange length='128' type-id='7ff19f0f' id='1eb1687a'/>
-      </array-type-def>
-      <union-decl name='__anonymous_union__3' size-in-bits='128' is-anonymous='yes' visibility='default' filepath='include/net/ip_fib.h' line='89' column='1' id='37def4b8'>
-        <data-member access='private'>
-          <var-decl name='ipv4' type-id='78a133c2' visibility='default' filepath='include/net/ip_fib.h' line='90' column='1'/>
-        </data-member>
-        <data-member access='private'>
-          <var-decl name='ipv6' type-id='f6ed712a' visibility='default' filepath='include/net/ip_fib.h' line='91' column='1'/>
+  pci_get_slot
+  pcie_capability_clear_and_set_word
+  pci_device_is_present
+  pci_find_bus
