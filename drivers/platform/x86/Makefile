@@ -81,13 +81,28 @@ obj-$(CONFIG_INTEL_HID_EVENT)		+= intel-hid.o
 obj-$(CONFIG_INTEL_INT0002_VGPIO)	+= intel_int0002_vgpio.o
 obj-$(CONFIG_INTEL_MENLOW)		+= intel_menlow.o
 obj-$(CONFIG_INTEL_OAKTRAIL)		+= intel_oaktrail.o
+obj-$(CONFIG_INTEL_SKL_INT3472)		+= intel_skl_int3472.o
+intel_skl_int3472-objs			:= intel_skl_int3472_common.o \
+                                           intel_skl_int3472_discrete.o \
+                                           intel_skl_int3472_tps68470.o
+
 obj-$(CONFIG_INTEL_VBTN)		+= intel-vbtn.o
 
 # Microsoft
+obj-$(CONFIG_SURFACE_AGGREGATOR)	+= surface_aggregator/
+obj-$(CONFIG_SURFACE_AGGREGATOR_REGISTRY) += surface_aggregator_registry.o
+obj-$(CONFIG_SURFACE_AGGREGATOR_CDEV)	+= surface_aggregator_cdev.o
+obj-$(CONFIG_SURFACE_ACPI_NOTIFY)	+= surface_acpi_notify.o
+obj-$(CONFIG_SURFACE_PERFMODE)		+= surface_perfmode.o
+obj-$(CONFIG_SURFACE_DTX)		+= surface_dtx.o
+
 obj-$(CONFIG_SURFACE3_WMI)		+= surface3-wmi.o
 obj-$(CONFIG_SURFACE_3_BUTTON)		+= surface3_button.o
 obj-$(CONFIG_SURFACE_3_POWER_OPREGION)	+= surface3_power.o
 obj-$(CONFIG_SURFACE_PRO3_BUTTON)	+= surfacepro3_button.o
+obj-$(CONFIG_SURFACE_GPE)		+= surface_gpe.o
+obj-$(CONFIG_SURFACE_HOTPLUG)		+= surface_hotplug.o
+obj-$(CONFIG_SURFACE_BOOK1_DGPU_SWITCH)	+= sb1_dgpu_sw.o
 
 # MSI
 obj-$(CONFIG_MSI_LAPTOP)	+= msi-laptop.o

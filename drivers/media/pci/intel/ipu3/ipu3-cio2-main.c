@@ -561,7 +561,9 @@ static void cio2_buffer_done(struct cio2_device *cio2, unsigned int dma_chan)
 
 		b = q->bufs[q->bufs_first];
 		if (b) {
-			unsigned int bytes = entry[1].second_entry.num_of_bytes;
+			unsigned int received = entry[1].second_entry.num_of_bytes;
+			unsigned long payload =
+				vb2_get_plane_payload(&b->vbb.vb2_buf, 0);
 
 			q->bufs[q->bufs_first] = NULL;
 			atomic_dec(&q->bufs_queued);
@@ -571,10 +573,10 @@ static void cio2_buffer_done(struct cio2_device *cio2, unsigned int dma_chan)
 			b->vbb.vb2_buf.timestamp = ns;
 			b->vbb.field = V4L2_FIELD_NONE;
 			b->vbb.sequence = atomic_read(&q->frame_sequence);
-			if (b->vbb.vb2_buf.planes[0].length != bytes)
-				dev_warn(dev, "buffer length is %d received %d\n",
-					 b->vbb.vb2_buf.planes[0].length,
-					 bytes);
+			if (payload != received)
+				dev_warn(dev,
+					 "payload length is %lu, received %u\n",
+					 payload, received);
 			vb2_buffer_done(&b->vbb.vb2_buf, VB2_BUF_STATE_DONE);
 		}
 		atomic_inc(&q->frame_sequence);
@@ -1095,8 +1097,8 @@ static int cio2_v4l2_try_fmt(struct file *file, void *fh, struct v4l2_format *f)
 	/* Only supports up to 4224x3136 */
 	if (mpix->width > CIO2_IMAGE_MAX_WIDTH)
 		mpix->width = CIO2_IMAGE_MAX_WIDTH;
-	if (mpix->height > CIO2_IMAGE_MAX_LENGTH)
-		mpix->height = CIO2_IMAGE_MAX_LENGTH;
+	if (mpix->height > CIO2_IMAGE_MAX_HEIGHT)
+		mpix->height = CIO2_IMAGE_MAX_HEIGHT;
 
 	mpix->num_planes = 1;
 	mpix->pixelformat = fmt->fourcc;
@@ -1283,9 +1285,8 @@ static int cio2_subdev_set_fmt(struct v4l2_subdev *sd,
 		}
 	}
 
-	fmt->format.width = min_t(u32, fmt->format.width, CIO2_IMAGE_MAX_WIDTH);
-	fmt->format.height = min_t(u32, fmt->format.height,
-				   CIO2_IMAGE_MAX_LENGTH);
+	fmt->format.width = min(fmt->format.width, CIO2_IMAGE_MAX_WIDTH);
+	fmt->format.height = min(fmt->format.height, CIO2_IMAGE_MAX_HEIGHT);
 	fmt->format.field = V4L2_FIELD_NONE;
 
 	mutex_lock(&q->subdev_lock);
@@ -1711,11 +1712,28 @@ static void cio2_queues_exit(struct cio2_device *cio2)
 		cio2_queue_exit(cio2, &cio2->queue[i]);
 }
 
+static int cio2_check_fwnode_graph(struct fwnode_handle *fwnode)
+{
+	struct fwnode_handle *endpoint;
+
+	if (IS_ERR_OR_NULL(fwnode))
+		return -EINVAL;
+
+	endpoint = fwnode_graph_get_next_endpoint(fwnode, NULL);
+	if (endpoint) {
+		fwnode_handle_put(endpoint);
+		return 0;
+	}
+
+	return cio2_check_fwnode_graph(fwnode->secondary);
+}
+
 /**************** PCI interface ****************/
 
 static int cio2_pci_probe(struct pci_dev *pci_dev,
 			  const struct pci_device_id *id)
 {
+	struct fwnode_handle *fwnode = dev_fwnode(&pci_dev->dev);
 	struct cio2_device *cio2;
 	int r;
 
@@ -1723,6 +1741,23 @@ static int cio2_pci_probe(struct pci_dev *pci_dev,
 	if (!cio2)
 		return -ENOMEM;
 	cio2->pci_dev = pci_dev;
+
+	/*
+	 * On some platforms no connections to sensors are defined in firmware,
+	 * if the device has no endpoints then we can try to build those as
+	 * software_nodes parsed from SSDB.
+	 */
+	r = cio2_check_fwnode_graph(fwnode);
+	if (r) {
+		if (fwnode && !IS_ERR_OR_NULL(fwnode->secondary)) {
+			dev_err(&pci_dev->dev, "fwnode graph has no endpoints connected\n");
+			return -EINVAL;
+		}
+
+		r = cio2_bridge_init(pci_dev);
+		if (r)
+			return r;
+	}
 
 	r = pcim_enable_device(pci_dev);
 	if (r) {
