@@ -64,6 +64,8 @@ KBUILD_CFLAGS += $(call cc-option,-mno-avx,)
 # Never want PIC in x86 kernel, prevent breakage with GCC built
 # with nonstandard options
 KBUILD_CFLAGS += -fno-pic
+# Intel CET isn't enabled in the kernel
+KBUILD_CFLAGS += $(call cc-option,-fcf-protection=none)
 
 ifeq ($(CONFIG_X86_32),y)
         BITS := 32
@@ -163,9 +165,6 @@ else
 
         KBUILD_CFLAGS += -mno-red-zone
         KBUILD_CFLAGS += -mcmodel=kernel
-
-	# Intel CET isn't enabled in the kernel
-	KBUILD_CFLAGS += $(call cc-option,-fcf-protection=none)
 
         # -funit-at-a-time shrinks the kernel .text considerably
         # unfortunately it makes reading oopses harder.
