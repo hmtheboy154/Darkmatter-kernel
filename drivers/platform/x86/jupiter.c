@@ -9,10 +9,12 @@
 #include <linux/acpi.h>
 #include <linux/hwmon.h>
 #include <linux/platform_device.h>
+#include <linux/regmap.h>
 
 struct jupiter {
 	struct acpi_device *adev;
 	struct device *hwmon;
+	void *regmap;
 };
 
 static ssize_t
@@ -56,20 +58,34 @@ JUPITER_ATTR_WO(recalculate, "SCHG", U16_MAX);
  * FIXME: The following attributes should probably be moved out of
  * HWMON device since they don't reall belong to it
  */
-static ssize_t
-power_cycle_display_store(struct device *dev, struct device_attribute *attr,
-			  const char *buf, size_t count)
-{
-	struct jupiter *fan = dev_get_drvdata(dev);
+JUPITER_ATTR_WO(led_brightness, "CHBV", U8_MAX);
+JUPITER_ATTR_WO(content_adaptive_brightness, "CABC", U8_MAX);
+JUPITER_ATTR_WO(gamma_set, "GAMA", U8_MAX);
+JUPITER_ATTR_WO(display_brightness, "WDBV", U8_MAX);
+JUPITER_ATTR_WO(ctrl_display, "WCDV", U8_MAX);
+JUPITER_ATTR_WO(cabc_minimum_brightness, "WCMB", U8_MAX);
+JUPITER_ATTR_WO(memory_data_access_control, "MDAC", U8_MAX);
 
-	if (ACPI_FAILURE(acpi_evaluate_object(fan->adev->handle,
-					      "DPCY", NULL, NULL)))
-		return -EIO;
+#define JUPITER_ATTR_WO_NOARG(_name, _method)				\
+	static ssize_t _name##_store(struct device *dev,		\
+				     struct device_attribute *attr,	\
+				     const char *buf, size_t count)	\
+	{								\
+		struct jupiter *fan = dev_get_drvdata(dev);		\
+									\
+		if (ACPI_FAILURE(acpi_evaluate_object(fan->adev->handle, \
+						      _method, NULL, NULL))) \
+			return -EIO;					\
+									\
+		return count;						\
+	}								\
+	static DEVICE_ATTR_WO(_name)
 
-	return count;
-}
-
-static DEVICE_ATTR_WO(power_cycle_display);
+JUPITER_ATTR_WO_NOARG(power_cycle_display, "DPCY");
+JUPITER_ATTR_WO_NOARG(display_normal_mode_on, "NORO");
+JUPITER_ATTR_WO_NOARG(display_inversion_off, "INOF");
+JUPITER_ATTR_WO_NOARG(display_inversion_on, "INON");
+JUPITER_ATTR_WO_NOARG(idle_mode_on, "WRNE");
 
 static umode_t
 jupiter_is_visible(struct kobject *kobj, struct attribute *attr, int index)
@@ -86,6 +102,20 @@ static struct attribute *jupiter_attributes[] = {
 	&dev_attr_maximum_battery_charge_rate.attr,
 	&dev_attr_recalculate.attr,
 	&dev_attr_power_cycle_display.attr,
+
+	&dev_attr_led_brightness.attr,
+	&dev_attr_content_adaptive_brightness.attr,
+	&dev_attr_gamma_set.attr,
+	&dev_attr_display_brightness.attr,
+	&dev_attr_ctrl_display.attr,
+	&dev_attr_cabc_minimum_brightness.attr,
+	&dev_attr_memory_data_access_control.attr,
+
+	&dev_attr_display_normal_mode_on.attr,
+	&dev_attr_display_inversion_off.attr,
+	&dev_attr_display_inversion_on.attr,
+	&dev_attr_idle_mode_on.attr,
+
 	NULL
 };
 
@@ -104,12 +134,38 @@ static const struct attribute_group *jupiter_groups[] = {
 	 ACPI_STA_DEVICE_PRESENT |		\
 	 ACPI_STA_DEVICE_FUNCTIONING)
 
+static int
+jupiter_ddic_reg_read(void *context, unsigned int reg, unsigned int *val)
+{
+	union acpi_object obj = { .type = ACPI_TYPE_INTEGER };
+	struct acpi_object_list arg_list = { .count = 1, .pointer = &obj, };
+	struct jupiter *jup = context;
+	unsigned long long _val;
+
+	obj.integer.value = reg;
+
+	if (ACPI_FAILURE(acpi_evaluate_integer(jup->adev->handle,
+					       "RDDI", &arg_list, &_val)))
+		return -EIO;
+
+	*val = _val;
+	return 0;
+}
+
 static int jupiter_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct jupiter *jup;
 	acpi_status status;
 	unsigned long long sta;
+
+	static const struct regmap_config regmap_config = {
+		.reg_bits = 8,
+		.val_bits = 8,
+		.max_register = 255,
+		.cache_type = REGCACHE_NONE,
+		.reg_read = jupiter_ddic_reg_read,
+	};
 
 	jup = devm_kzalloc(dev, sizeof(*jup), GFP_KERNEL);
 	if (!jup)
@@ -137,6 +193,10 @@ static int jupiter_probe(struct platform_device *pdev)
 		dev_err(dev, "Failed to register HWMON device");
 		return PTR_ERR(jup->hwmon);
 	}
+
+	jup->regmap = devm_regmap_init(dev, NULL, jup, &regmap_config);
+	if (IS_ERR(jup->regmap))
+		dev_err(dev, "Failed to register REGMAP");
 
 	return 0;
 }
