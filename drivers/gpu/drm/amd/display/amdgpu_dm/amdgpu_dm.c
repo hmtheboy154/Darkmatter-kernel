@@ -155,6 +155,9 @@ MODULE_FIRMWARE(FIRMWARE_NAVI12_DMCU);
 #define DMUB_ASYNC_TO_SYNC_ACCESS_SUCCESS 3
 #define DMUB_ASYNC_TO_SYNC_ACCESS_INVALID 4
 
+/* Maximum backlight level. */
+#define AMDGPU_MAX_BL_LEVEL 0xFFFF
+
 /**
  * DOC: overview
  *
