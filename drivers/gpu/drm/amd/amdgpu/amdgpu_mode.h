@@ -345,8 +345,6 @@ struct amdgpu_mode_info {
 	const enum drm_plane_type *plane_type;
 };
 
-#define AMDGPU_MAX_BL_LEVEL 0xFF
-
 struct amdgpu_backlight_privdata {
 	struct amdgpu_encoder *encoder;
 	uint8_t negative;
