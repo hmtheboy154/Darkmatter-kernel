@@ -114,6 +114,8 @@ extern int unprivileged_userns_clone;
 #define unprivileged_userns_clone 0
 #endif
 
+#undef CREATE_TRACE_POINTS
+#include <trace/hooks/sched.h>
 /*
  * Minimum number of threads to boot the kernel
  */
@@ -451,6 +453,7 @@ void free_task(struct task_struct *tsk)
 	cpufreq_task_times_exit(tsk);
 	scs_release(tsk);
 
+	trace_android_vh_free_task(tsk);
 #ifndef CONFIG_THREAD_INFO_IN_TASK
 	/*
 	 * The task is finally done with both the stack and thread_info,
@@ -977,6 +980,7 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 #ifdef CONFIG_MEMCG
 	tsk->active_memcg = NULL;
 #endif
+	trace_android_vh_dup_task_struct(tsk, orig);
 	return tsk;
 
 free_stack:
