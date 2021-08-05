@@ -39,6 +39,7 @@
 #include <linux/virtio_ring.h>
 #include <asm/byteorder.h>
 #include <linux/platform_device.h>
+#include <trace/hooks/remoteproc.h>
 
 #include "remoteproc_internal.h"
 
@@ -1725,6 +1726,7 @@ int rproc_trigger_recovery(struct rproc *rproc)
 	release_firmware(firmware_p);
 
 unlock_mutex:
+	trace_android_vh_rproc_recovery(rproc);
 	mutex_unlock(&rproc->lock);
 	return ret;
 }
@@ -2300,7 +2302,6 @@ int rproc_del(struct rproc *rproc)
 	mutex_unlock(&rproc->lock);
 
 	rproc_delete_debug_dir(rproc);
-	rproc_char_device_remove(rproc);
 
 	/* the rproc is downref'ed as soon as it's removed from the klist */
 	mutex_lock(&rproc_list_mutex);
@@ -2311,6 +2312,7 @@ int rproc_del(struct rproc *rproc)
 	synchronize_rcu();
 
 	device_del(&rproc->dev);
+	rproc_char_device_remove(rproc);
 
 	return 0;
 }

@@ -16,6 +16,7 @@
 #include <linux/io.h>
 #include <linux/leds.h>
 #include <linux/interrupt.h>
+#include <linux/android_kabi.h>
 
 #include <linux/mmc/host.h>
 
@@ -253,6 +254,7 @@
 
 /* 60-FB reserved */
 
+#define SDHCI_PRESET_FOR_HIGH_SPEED	0x64
 #define SDHCI_PRESET_FOR_SDR12 0x66
 #define SDHCI_PRESET_FOR_SDR25 0x68
 #define SDHCI_PRESET_FOR_SDR50 0x6A
@@ -605,6 +607,8 @@ struct sdhci_host {
 
 	u64			data_timeout;
 
+	ANDROID_KABI_RESERVE(1);
+
 	unsigned long private[] ____cacheline_aligned;
 };
 
@@ -652,6 +656,8 @@ struct sdhci_ops {
 	void	(*request_done)(struct sdhci_host *host,
 				struct mmc_request *mrq);
 	void    (*dump_vendor_regs)(struct sdhci_host *host);
+
+	ANDROID_KABI_RESERVE(1);
 };
 
 #ifdef CONFIG_MMC_SDHCI_IO_ACCESSORS
