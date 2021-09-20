@@ -87,6 +87,26 @@ JUPITER_ATTR_WO_NOARG(display_inversion_off, "INOF");
 JUPITER_ATTR_WO_NOARG(display_inversion_on, "INON");
 JUPITER_ATTR_WO_NOARG(idle_mode_on, "WRNE");
 
+#define JUPITER_ATTR_RO(_name, _method)					\
+	static ssize_t _name##_show(struct device *dev,			\
+				    struct device_attribute *attr,	\
+				    char *buf)				\
+	{								\
+		struct jupiter *jup = dev_get_drvdata(dev);		\
+		unsigned long long val;					\
+									\
+		if (ACPI_FAILURE(acpi_evaluate_integer(			\
+					 jup->adev->handle,		\
+					 _method, NULL, &val)))		\
+			return -EIO;					\
+									\
+		return sprintf(buf, "%llu\n", val);			\
+	}								\
+	static DEVICE_ATTR_RO(_name)
+
+JUPITER_ATTR_RO(firmware_version, "PDFW");
+JUPITER_ATTR_RO(board_id, "BOID");
+
 static umode_t
 jupiter_is_visible(struct kobject *kobj, struct attribute *attr, int index)
 {
@@ -115,6 +135,9 @@ static struct attribute *jupiter_attributes[] = {
 	&dev_attr_display_inversion_off.attr,
 	&dev_attr_display_inversion_on.attr,
 	&dev_attr_idle_mode_on.attr,
+
+	&dev_attr_firmware_version.attr,
+	&dev_attr_board_id.attr,
 
 	NULL
 };
