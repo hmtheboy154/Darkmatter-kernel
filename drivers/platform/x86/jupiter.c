@@ -129,6 +129,65 @@ static const struct attribute_group *jupiter_groups[] = {
 	NULL
 };
 
+static int jupiter_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
+			      u32 attr, int channel, long *temp)
+{
+
+	struct jupiter *jup = dev_get_drvdata(dev);
+	unsigned long long val;
+
+	if (attr != hwmon_temp_input)
+		return -EOPNOTSUPP;
+
+	if (ACPI_FAILURE(acpi_evaluate_integer(jup->adev->handle,
+					       "BATT", NULL, &val)))
+		return -EIO;
+	/*
+	 * Assuming BATT returns deg C we need to mutiply it by 1000
+	 * to convert to mC
+	 */
+	*temp = val * 1000;
+
+	return 0;
+}
+
+static int
+jupiter_hwmon_read_string(struct device *dev, enum hwmon_sensor_types type,
+			  u32 attr, int channel, const char **str)
+{
+	if (type != hwmon_temp ||
+	    attr != hwmon_temp_label)
+		return -EOPNOTSUPP;
+
+	*str = "Battery Temp";
+
+	return 0;
+}
+
+static umode_t
+jupiter_hwmon_is_visible(const void *data, enum hwmon_sensor_types type,
+			 u32 attr, int channel)
+{
+	return 0444;
+}
+
+static const struct hwmon_channel_info *jupiter_info[] = {
+	HWMON_CHANNEL_INFO(temp,
+			   HWMON_T_INPUT | HWMON_T_LABEL),
+	NULL
+};
+
+static const struct hwmon_ops jupiter_hwmon_ops = {
+	.is_visible = jupiter_hwmon_is_visible,
+	.read = jupiter_hwmon_read,
+	.read_string = jupiter_hwmon_read_string,
+};
+
+static const struct hwmon_chip_info jupiter_chip_info = {
+	.ops = &jupiter_hwmon_ops,
+	.info = jupiter_info,
+};
+
 #define JUPITER_STA_OK				\
 	(ACPI_STA_DEVICE_ENABLED |		\
 	 ACPI_STA_DEVICE_PRESENT |		\
@@ -185,10 +244,11 @@ static int jupiter_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	jup->hwmon = devm_hwmon_device_register_with_groups(dev,
-							    "jupiter",
-							    jup,
-							    jupiter_groups);
+	jup->hwmon = devm_hwmon_device_register_with_info(dev,
+							  "jupiter",
+							  jup,
+							  &jupiter_chip_info,
+							  jupiter_groups);
 	if (IS_ERR(jup->hwmon)) {
 		dev_err(dev, "Failed to register HWMON device");
 		return PTR_ERR(jup->hwmon);
