@@ -279,6 +279,11 @@ static void __init unapply_rodata_relocations(void *section, int section_size,
 	}
 }
 
+extern struct {
+	u32	offset;
+	u32	count;
+} fips140_rela_text, fips140_rela_rodata;
+
 static bool __init check_fips140_module_hmac(void)
 {
 	SHASH_DESC_ON_STACK(desc, dontcare);
@@ -306,15 +311,12 @@ static bool __init check_fips140_module_hmac(void)
 
 	// apply the relocations in reverse on the copies of .text  and .rodata
 	unapply_text_relocations(textcopy, textsize,
-				 __this_module.arch.text_relocations,
-				 __this_module.arch.num_text_relocations);
+				 offset_to_ptr(&fips140_rela_text.offset),
+				 fips140_rela_text.count);
 
 	unapply_rodata_relocations(rodatacopy, rodatasize,
-				   __this_module.arch.rodata_relocations,
-				   __this_module.arch.num_rodata_relocations);
-
-	kfree(__this_module.arch.text_relocations);
-	kfree(__this_module.arch.rodata_relocations);
+				  offset_to_ptr(&fips140_rela_rodata.offset),
+				  fips140_rela_rodata.count);
 
 	desc->tfm = crypto_alloc_shash("hmac(sha256)", 0, 0);
 	if (IS_ERR(desc->tfm)) {
@@ -569,6 +571,7 @@ fips140_init(void)
 	const u32 *initcall;
 
 	pr_info("loading module\n");
+	fips140_init_thread = current;
 
 	unregister_existing_fips140_algos();
 
@@ -590,19 +593,6 @@ fips140_init(void)
 		}
 	}
 
-	if (!update_live_fips140_algos())
-		goto panic;
-
-	if (!update_fips140_library_routines())
-		goto panic;
-
-	/*
-	 * Wait until all tasks have at least been scheduled once and preempted
-	 * voluntarily. This ensures that none of the superseded algorithms that
-	 * were already in use will still be live.
-	 */
-	synchronize_rcu_tasks();
-
 	if (!fips140_run_selftests())
 		goto panic;
 
@@ -620,6 +610,21 @@ fips140_init(void)
 		goto panic;
 	}
 	pr_info("integrity check passed\n");
+
+	complete_all(&fips140_tests_done);
+
+	if (!update_live_fips140_algos())
+		goto panic;
+
+	if (!update_fips140_library_routines())
+		goto panic;
+
+	/*
+	 * Wait until all tasks have at least been scheduled once and preempted
+	 * voluntarily. This ensures that none of the superseded algorithms that
+	 * were already in use will still be live.
+	 */
+	synchronize_rcu_tasks();
 
 	pr_info("module successfully loaded\n");
 	return 0;
