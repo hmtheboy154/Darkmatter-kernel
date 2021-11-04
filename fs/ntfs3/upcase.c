@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  *
- * Copyright (C) 2019-2020 Paragon Software GmbH, All rights reserved.
+ * Copyright (C) 2019-2021 Paragon Software GmbH, All rights reserved.
  *
  */
-#include <linux/blkdev.h>
-#include <linux/buffer_head.h>
-#include <linux/module.h>
-#include <linux/nls.h>
 
-#include "debug.h"
-#include "ntfs.h"
+#include <linux/kernel.h>
+#include <linux/types.h>
+
 #include "ntfs_fs.h"
 
 static inline u16 upcase_unicode_char(const u16 *upcase, u16 chr)
@@ -24,7 +21,18 @@ static inline u16 upcase_unicode_char(const u16 *upcase, u16 chr)
 	return upcase[chr];
 }
 
-/* Thanks Kari Argillander <kari.argillander@gmail.com> for idea and implementation 'bothcase' */
+/*
+ * ntfs_cmp_names
+ *
+ * Thanks Kari Argillander <kari.argillander@gmail.com> for idea and implementation 'bothcase'
+ *
+ * Straight way to compare names:
+ * - Case insensitive
+ * - If name equals and 'bothcases' then
+ * - Case sensitive
+ * 'Straight way' code scans input names twice in worst case.
+ * Optimized code scans input names only once.
+ */
 int ntfs_cmp_names(const __le16 *s1, size_t l1, const __le16 *s2, size_t l2,
 		   const u16 *upcase, bool bothcase)
 {
@@ -54,10 +62,8 @@ case_insentive:
 			return diff2;
 	}
 
-	if (bothcase && diff1)
-		return diff1;
-
-	return l1 - l2;
+	diff2 = l1 - l2;
+	return diff2 ? diff2 : diff1;
 }
 
 int ntfs_cmp_names_cpu(const struct cpu_str *uni1, const struct le_str *uni2,
@@ -93,8 +99,6 @@ case_insentive:
 			return diff2;
 	}
 
-	if (bothcase && diff1)
-		return diff1;
-
-	return l1 - l2;
+	diff2 = l1 - l2;
+	return diff2 ? diff2 : diff1;
 }

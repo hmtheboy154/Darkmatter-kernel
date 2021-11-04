@@ -1,49 +1,44 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  *
- * Copyright (C) 2019-2020 Paragon Software GmbH, All rights reserved.
+ * Copyright (C) 2019-2021 Paragon Software GmbH, All rights reserved.
  *
- *  directory handling functions for ntfs-based filesystems
+ *  Directory handling functions for NTFS-based filesystems.
  *
  */
-#include <linux/blkdev.h>
-#include <linux/buffer_head.h>
+
 #include <linux/fs.h>
-#include <linux/iversion.h>
 #include <linux/nls.h>
 
 #include "debug.h"
 #include "ntfs.h"
 #include "ntfs_fs.h"
 
-/*
- * Convert little endian utf16 to nls string
- */
-int ntfs_utf16_to_nls(struct ntfs_sb_info *sbi, const struct le_str *uni,
+/* Convert little endian UTF-16 to NLS string. */
+int ntfs_utf16_to_nls(struct ntfs_sb_info *sbi, const __le16 *name, u32 len,
 		      u8 *buf, int buf_len)
 {
-	int ret, uni_len;
-	const __le16 *ip;
+	int ret, warn;
 	u8 *op;
-	struct nls_table *nls = sbi->options.nls;
+	struct nls_table *nls = sbi->options->nls;
 
 	static_assert(sizeof(wchar_t) == sizeof(__le16));
 
 	if (!nls) {
-		/* utf16 -> utf8 */
-		ret = utf16s_to_utf8s((wchar_t *)uni->name, uni->len,
-				      UTF16_LITTLE_ENDIAN, buf, buf_len);
+		/* UTF-16 -> UTF-8 */
+		ret = utf16s_to_utf8s(name, len, UTF16_LITTLE_ENDIAN, buf,
+				      buf_len);
 		buf[ret] = '\0';
 		return ret;
 	}
 
-	ip = uni->name;
 	op = buf;
-	uni_len = uni->len;
+	warn = 0;
 
-	while (uni_len--) {
+	while (len--) {
 		u16 ec;
 		int charlen;
+		char dump[5];
 
 		if (buf_len < NLS_MAX_CHARSET_SIZE) {
 			ntfs_warn(sbi->sb,
@@ -51,18 +46,27 @@ int ntfs_utf16_to_nls(struct ntfs_sb_info *sbi, const struct le_str *uni,
 			break;
 		}
 
-		ec = le16_to_cpu(*ip++);
+		ec = le16_to_cpu(*name++);
 		charlen = nls->uni2char(ec, op, buf_len);
 
 		if (charlen > 0) {
 			op += charlen;
 			buf_len -= charlen;
-		} else {
-			*op++ = ':';
-			op = hex_byte_pack(op, ec >> 8);
-			op = hex_byte_pack(op, ec);
-			buf_len -= 5;
+			continue;
 		}
+
+		*op++ = '_';
+		buf_len -= 1;
+		if (warn)
+			continue;
+
+		warn = 1;
+		hex_byte_pack(&dump[0], ec >> 8);
+		hex_byte_pack(&dump[2], ec);
+		dump[4] = 0;
+
+		ntfs_err(sbi->sb, "failed to convert \"%s\" to %s", dump,
+			 nls->charset);
 	}
 
 	*op = '\0';
@@ -78,8 +82,9 @@ int ntfs_utf16_to_nls(struct ntfs_sb_info *sbi, const struct le_str *uni,
 // clang-format on
 
 /*
- * modified version of put_utf16 from fs/nls/nls_base.c
- * is sparse warnings free
+ * put_utf16 - Modified version of put_utf16 from fs/nls/nls_base.c
+ *
+ * Function is sparse warnings free.
  */
 static inline void put_utf16(wchar_t *s, unsigned int c,
 			     enum utf16_endian endian)
@@ -101,8 +106,10 @@ static inline void put_utf16(wchar_t *s, unsigned int c,
 }
 
 /*
- * modified version of 'utf8s_to_utf16s' allows to
- * detect -ENAMETOOLONG without writing out of expected maximum
+ * _utf8s_to_utf16s
+ *
+ * Modified version of 'utf8s_to_utf16s' allows to
+ * detect -ENAMETOOLONG without writing out of expected maximum.
  */
 static int _utf8s_to_utf16s(const u8 *s, int inlen, enum utf16_endian endian,
 			    wchar_t *pwcs, int maxout)
@@ -154,17 +161,18 @@ static int _utf8s_to_utf16s(const u8 *s, int inlen, enum utf16_endian endian,
 }
 
 /*
- * Convert input string to utf16
- *
- * name, name_len - input name
- * uni, max_ulen - destination memory
- * endian - endian of target utf16 string
+ * ntfs_nls_to_utf16 - Convert input string to UTF-16.
+ * @name:	Input name.
+ * @name_len:	Input name length.
+ * @uni:	Destination memory.
+ * @max_ulen:	Destination memory.
+ * @endian:	Endian of target UTF-16 string.
  *
  * This function is called:
- * - to create ntfs name
+ * - to create NTFS name
  * - to create symlink
  *
- * returns utf16 string length or error (if negative)
+ * Return: UTF-16 string length or error (if negative).
  */
 int ntfs_nls_to_utf16(struct ntfs_sb_info *sbi, const u8 *name, u32 name_len,
 		      struct cpu_str *uni, u32 max_ulen,
@@ -172,7 +180,7 @@ int ntfs_nls_to_utf16(struct ntfs_sb_info *sbi, const u8 *name, u32 name_len,
 {
 	int ret, slen;
 	const u8 *end;
-	struct nls_table *nls = sbi->options.nls;
+	struct nls_table *nls = sbi->options->nls;
 	u16 *uname = uni->name;
 
 	static_assert(sizeof(wchar_t) == sizeof(u16));
@@ -219,7 +227,9 @@ int ntfs_nls_to_utf16(struct ntfs_sb_info *sbi, const u8 *name, u32 name_len,
 	return ret;
 }
 
-/* helper function */
+/*
+ * dir_search_u - Helper function.
+ */
 struct inode *dir_search_u(struct inode *dir, const struct cpu_str *uni,
 			   struct ntfs_fnd *fnd)
 {
@@ -284,15 +294,15 @@ static inline int ntfs_filldir(struct ntfs_sb_info *sbi, struct ntfs_inode *ni,
 	if (ino == MFT_REC_ROOT)
 		return 0;
 
-	/* Skip meta files ( unless option to show metafiles is set ) */
-	if (!sbi->options.showmeta && ntfs_is_meta_file(sbi, ino))
+	/* Skip meta files. Unless option to show metafiles is set. */
+	if (!sbi->options->showmeta && ntfs_is_meta_file(sbi, ino))
 		return 0;
 
-	if (sbi->options.nohidden && (fname->dup.fa & FILE_ATTRIBUTE_HIDDEN))
+	if (sbi->options->nohidden && (fname->dup.fa & FILE_ATTRIBUTE_HIDDEN))
 		return 0;
 
-	name_len = ntfs_utf16_to_nls(sbi, (struct le_str *)&fname->name_len,
-				     name, PATH_MAX);
+	name_len = ntfs_utf16_to_nls(sbi, fname->name, fname->name_len, name,
+				     PATH_MAX);
 	if (name_len <= 0) {
 		ntfs_warn(sbi->sb, "failed to convert name for inode %lx.",
 			  ino);
@@ -305,9 +315,7 @@ static inline int ntfs_filldir(struct ntfs_sb_info *sbi, struct ntfs_inode *ni,
 }
 
 /*
- * ntfs_read_hdr
- *
- * helper function 'ntfs_readdir'
+ * ntfs_read_hdr - Helper function for ntfs_readdir().
  */
 static int ntfs_read_hdr(struct ntfs_sb_info *sbi, struct ntfs_inode *ni,
 			 const struct INDEX_HDR *hdr, u64 vbo, u64 pos,
@@ -331,7 +339,7 @@ static int ntfs_read_hdr(struct ntfs_sb_info *sbi, struct ntfs_inode *ni,
 		if (de_is_last(e))
 			return 0;
 
-		/* Skip already enumerated*/
+		/* Skip already enumerated. */
 		if (vbo + off < pos)
 			continue;
 
@@ -348,11 +356,11 @@ static int ntfs_read_hdr(struct ntfs_sb_info *sbi, struct ntfs_inode *ni,
 }
 
 /*
- * file_operations::iterate_shared
+ * ntfs_readdir - file_operations::iterate_shared
  *
  * Use non sorted enumeration.
  * We have an example of broken volume where sorted enumeration
- * counts each name twice
+ * counts each name twice.
  */
 static int ntfs_readdir(struct file *file, struct dir_context *ctx)
 {
@@ -371,7 +379,7 @@ static int ntfs_readdir(struct file *file, struct dir_context *ctx)
 	struct indx_node *node = NULL;
 	u8 index_bits = ni->dir.index_bits;
 
-	/* name is a buffer of PATH_MAX length */
+	/* Name is a buffer of PATH_MAX length. */
 	static_assert(NTFS_NAME_LEN * 4 < PATH_MAX);
 
 	eod = i_size + sbi->record_size;
@@ -382,16 +390,16 @@ static int ntfs_readdir(struct file *file, struct dir_context *ctx)
 	if (!dir_emit_dots(file, ctx))
 		return 0;
 
-	/* allocate PATH_MAX bytes */
+	/* Allocate PATH_MAX bytes. */
 	name = __getname();
 	if (!name)
 		return -ENOMEM;
 
 	if (!ni->mi_loaded && ni->attr_list.size) {
 		/*
-		 * directory inode is locked for read
-		 * load all subrecords to avoid 'write' access to 'ni' during
-		 * directory reading
+		 * Directory inode is locked for read.
+		 * Load all subrecords to avoid 'write' access to 'ni' during
+		 * directory reading.
 		 */
 		ni_lock(ni);
 		if (!ni->mi_loaded && ni->attr_list.size) {
@@ -574,10 +582,12 @@ bool dir_is_empty(struct inode *dir)
 	return is_empty;
 }
 
+// clang-format off
 const struct file_operations ntfs_dir_operations = {
-	.llseek = generic_file_llseek,
-	.read = generic_read_dir,
-	.iterate_shared = ntfs_readdir,
-	.fsync = generic_file_fsync,
-	.open = ntfs_file_open,
+	.llseek		= generic_file_llseek,
+	.read		= generic_read_dir,
+	.iterate_shared	= ntfs_readdir,
+	.fsync		= generic_file_fsync,
+	.open		= ntfs_file_open,
 };
+// clang-format on

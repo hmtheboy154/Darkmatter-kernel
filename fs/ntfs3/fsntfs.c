@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  *
- * Copyright (C) 2019-2020 Paragon Software GmbH, All rights reserved.
+ * Copyright (C) 2019-2021 Paragon Software GmbH, All rights reserved.
  *
  */
 
 #include <linux/blkdev.h>
 #include <linux/buffer_head.h>
 #include <linux/fs.h>
-#include <linux/nls.h>
+#include <linux/kernel.h>
 
 #include "debug.h"
 #include "ntfs.h"
@@ -101,9 +101,7 @@ const __le16 WOF_NAME[17] = {
 // clang-format on
 
 /*
- * ntfs_fix_pre_write
- *
- * inserts fixups into 'rhdr' before writing to disk
+ * ntfs_fix_pre_write - Insert fixups into @rhdr before writing to disk.
  */
 bool ntfs_fix_pre_write(struct NTFS_RECORD_HEADER *rhdr, size_t bytes)
 {
@@ -117,7 +115,7 @@ bool ntfs_fix_pre_write(struct NTFS_RECORD_HEADER *rhdr, size_t bytes)
 		return false;
 	}
 
-	/* Get fixup pointer */
+	/* Get fixup pointer. */
 	fixup = Add2Ptr(rhdr, fo);
 
 	if (*fixup >= 0x7FFF)
@@ -138,10 +136,9 @@ bool ntfs_fix_pre_write(struct NTFS_RECORD_HEADER *rhdr, size_t bytes)
 }
 
 /*
- * ntfs_fix_post_read
+ * ntfs_fix_post_read - Remove fixups after reading from disk.
  *
- * remove fixups after reading from disk
- * Returns < 0 if error, 0 if ok, 1 if need to update fixups
+ * Return: < 0 if error, 0 if ok, 1 if need to update fixups.
  */
 int ntfs_fix_post_read(struct NTFS_RECORD_HEADER *rhdr, size_t bytes,
 		       bool simple)
@@ -151,29 +148,29 @@ int ntfs_fix_post_read(struct NTFS_RECORD_HEADER *rhdr, size_t bytes,
 	u16 sample, fo, fn;
 
 	fo = le16_to_cpu(rhdr->fix_off);
-	fn = simple ? ((bytes >> SECTOR_SHIFT) + 1) :
-		      le16_to_cpu(rhdr->fix_num);
+	fn = simple ? ((bytes >> SECTOR_SHIFT) + 1)
+		    : le16_to_cpu(rhdr->fix_num);
 
-	/* Check errors */
+	/* Check errors. */
 	if ((fo & 1) || fo + fn * sizeof(short) > SECTOR_SIZE || !fn-- ||
 	    fn * SECTOR_SIZE > bytes) {
-		return -EINVAL; /* native chkntfs returns ok! */
+		return -EINVAL; /* Native chkntfs returns ok! */
 	}
 
-	/* Get fixup pointer */
+	/* Get fixup pointer. */
 	fixup = Add2Ptr(rhdr, fo);
 	sample = *fixup;
 	ptr = Add2Ptr(rhdr, SECTOR_SIZE - sizeof(short));
 	ret = 0;
 
 	while (fn--) {
-		/* Test current word */
+		/* Test current word. */
 		if (*ptr != sample) {
 			/* Fixup does not match! Is it serious error? */
 			ret = -E_NTFS_FIXUP;
 		}
 
-		/* Replace fixup */
+		/* Replace fixup. */
 		*ptr = *++fixup;
 		ptr += SECTOR_SIZE / sizeof(short);
 	}
@@ -182,9 +179,7 @@ int ntfs_fix_post_read(struct NTFS_RECORD_HEADER *rhdr, size_t bytes,
 }
 
 /*
- * ntfs_extend_init
- *
- * loads $Extend file
+ * ntfs_extend_init - Load $Extend file.
  */
 int ntfs_extend_init(struct ntfs_sb_info *sbi)
 {
@@ -209,7 +204,7 @@ int ntfs_extend_init(struct ntfs_sb_info *sbi)
 		goto out;
 	}
 
-	/* if ntfs_iget5 reads from disk it never returns bad inode */
+	/* If ntfs_iget5() reads from disk it never returns bad inode. */
 	if (!S_ISDIR(inode->i_mode)) {
 		err = -EINVAL;
 		goto out;
@@ -257,12 +252,13 @@ int ntfs_loadlog_and_replay(struct ntfs_inode *ni, struct ntfs_sb_info *sbi)
 {
 	int err = 0;
 	struct super_block *sb = sbi->sb;
-	struct inode *inode = &ni->vfs_inode;
+	bool initialized = false;
 	struct MFT_REF ref;
+	struct inode *inode;
 
-	/* Check for 4GB */
-	if (inode->i_size >= 0x100000000ull) {
-		ntfs_err(sb, "$LogFile is too big");
+	/* Check for 4GB. */
+	if (ni->vfs_inode.i_size >= 0x100000000ull) {
+		ntfs_err(sb, "\x24LogFile is too big");
 		err = -EINVAL;
 		goto out;
 	}
@@ -279,7 +275,7 @@ int ntfs_loadlog_and_replay(struct ntfs_inode *ni, struct ntfs_sb_info *sbi)
 		inode = NULL;
 
 	if (!inode) {
-		/* Try to use mft copy */
+		/* Try to use MFT copy. */
 		u64 t64 = sbi->mft.lbo;
 
 		sbi->mft.lbo = sbi->mft.lbo2;
@@ -297,9 +293,10 @@ int ntfs_loadlog_and_replay(struct ntfs_inode *ni, struct ntfs_sb_info *sbi)
 
 	sbi->mft.ni = ntfs_i(inode);
 
+	/* LogFile should not contains attribute list. */
 	err = ni_load_all_mi(sbi->mft.ni);
 	if (!err)
-		err = log_replay(ni);
+		err = log_replay(ni, &initialized);
 
 	iput(inode);
 	sbi->mft.ni = NULL;
@@ -312,9 +309,10 @@ int ntfs_loadlog_and_replay(struct ntfs_inode *ni, struct ntfs_sb_info *sbi)
 		goto out;
 	}
 
-	if (sb_rdonly(sb))
+	if (sb_rdonly(sb) || !initialized)
 		goto out;
 
+	/* Fill LogFile by '-1' if it is initialized. */
 	err = ntfs_bio_fill_1(sbi, &ni->file.run);
 
 out:
@@ -326,7 +324,7 @@ out:
 /*
  * ntfs_query_def
  *
- * returns current ATTR_DEF_ENTRY for given attribute type
+ * Return: Current ATTR_DEF_ENTRY for given attribute type.
  */
 const struct ATTR_DEF_ENTRY *ntfs_query_def(struct ntfs_sb_info *sbi,
 					    enum ATTR_TYPE type)
@@ -353,57 +351,51 @@ const struct ATTR_DEF_ENTRY *ntfs_query_def(struct ntfs_sb_info *sbi,
 }
 
 /*
- * ntfs_look_for_free_space
- *
- * looks for a free space in bitmap
+ * ntfs_look_for_free_space - Look for a free space in bitmap.
  */
 int ntfs_look_for_free_space(struct ntfs_sb_info *sbi, CLST lcn, CLST len,
 			     CLST *new_lcn, CLST *new_len,
 			     enum ALLOCATE_OPT opt)
 {
 	int err;
+	CLST alen;
 	struct super_block *sb = sbi->sb;
-	size_t a_lcn, zlen, zeroes, zlcn, zlen2, ztrim, new_zlen;
+	size_t alcn, zlen, zeroes, zlcn, zlen2, ztrim, new_zlen;
 	struct wnd_bitmap *wnd = &sbi->used.bitmap;
 
 	down_write_nested(&wnd->rw_lock, BITMAP_MUTEX_CLUSTERS);
 	if (opt & ALLOCATE_MFT) {
-		CLST alen;
-
 		zlen = wnd_zone_len(wnd);
 
 		if (!zlen) {
 			err = ntfs_refresh_zone(sbi);
 			if (err)
-				goto out;
+				goto up_write;
 
 			zlen = wnd_zone_len(wnd);
+		}
 
-			if (!zlen) {
-				ntfs_err(sbi->sb,
-					 "no free space to extend mft");
-				err = -ENOSPC;
-				goto out;
-			}
+		if (!zlen) {
+			ntfs_err(sbi->sb, "no free space to extend mft");
+			err = -ENOSPC;
+			goto up_write;
 		}
 
 		lcn = wnd_zone_bit(wnd);
-		alen = zlen > len ? len : zlen;
+		alen = min_t(CLST, len, zlen);
 
 		wnd_zone_set(wnd, lcn + alen, zlen - alen);
 
 		err = wnd_set_used(wnd, lcn, alen);
 		if (err)
-			goto out;
+			goto up_write;
 
-		*new_lcn = lcn;
-		*new_len = alen;
-		goto ok;
+		alcn = lcn;
+		goto space_found;
 	}
-
 	/*
 	 * 'Cause cluster 0 is always used this value means that we should use
-	 * cached value of 'next_free_lcn' to improve performance
+	 * cached value of 'next_free_lcn' to improve performance.
 	 */
 	if (!lcn)
 		lcn = sbi->used.next_free_lcn;
@@ -411,72 +403,55 @@ int ntfs_look_for_free_space(struct ntfs_sb_info *sbi, CLST lcn, CLST len,
 	if (lcn >= wnd->nbits)
 		lcn = 0;
 
-	*new_len = wnd_find(wnd, len, lcn, BITMAP_FIND_MARK_AS_USED, &a_lcn);
-	if (*new_len) {
-		*new_lcn = a_lcn;
-		goto ok;
-	}
+	alen = wnd_find(wnd, len, lcn, BITMAP_FIND_MARK_AS_USED, &alcn);
+	if (alen)
+		goto space_found;
 
-	/* Try to use clusters from MftZone */
+	/* Try to use clusters from MftZone. */
 	zlen = wnd_zone_len(wnd);
 	zeroes = wnd_zeroes(wnd);
 
 	/* Check too big request */
-	if (len > zeroes + zlen)
-		goto no_space;
+	if (len > zeroes + zlen || zlen <= NTFS_MIN_MFT_ZONE) {
+		err = -ENOSPC;
+		goto up_write;
+	}
 
-	if (zlen <= NTFS_MIN_MFT_ZONE)
-		goto no_space;
-
-	/* How many clusters to cat from zone */
+	/* How many clusters to cat from zone. */
 	zlcn = wnd_zone_bit(wnd);
 	zlen2 = zlen >> 1;
-	ztrim = len > zlen ? zlen : (len > zlen2 ? len : zlen2);
-	new_zlen = zlen - ztrim;
-
-	if (new_zlen < NTFS_MIN_MFT_ZONE) {
-		new_zlen = NTFS_MIN_MFT_ZONE;
-		if (new_zlen > zlen)
-			new_zlen = zlen;
-	}
+	ztrim = clamp_val(len, zlen2, zlen);
+	new_zlen = max_t(size_t, zlen - ztrim, NTFS_MIN_MFT_ZONE);
 
 	wnd_zone_set(wnd, zlcn, new_zlen);
 
-	/* allocate continues clusters */
-	*new_len =
-		wnd_find(wnd, len, 0,
-			 BITMAP_FIND_MARK_AS_USED | BITMAP_FIND_FULL, &a_lcn);
-	if (*new_len) {
-		*new_lcn = a_lcn;
-		goto ok;
+	/* Allocate continues clusters. */
+	alen = wnd_find(wnd, len, 0,
+			BITMAP_FIND_MARK_AS_USED | BITMAP_FIND_FULL, &alcn);
+	if (!alen) {
+		err = -ENOSPC;
+		goto up_write;
 	}
 
-no_space:
-	up_write(&wnd->rw_lock);
-
-	return -ENOSPC;
-
-ok:
+space_found:
 	err = 0;
+	*new_len = alen;
+	*new_lcn = alcn;
 
-	ntfs_unmap_meta(sb, *new_lcn, *new_len);
+	ntfs_unmap_meta(sb, alcn, alen);
 
-	if (opt & ALLOCATE_MFT)
-		goto out;
-
-	/* Set hint for next requests */
-	sbi->used.next_free_lcn = *new_lcn + *new_len;
-
-out:
+	/* Set hint for next requests. */
+	if (!(opt & ALLOCATE_MFT))
+		sbi->used.next_free_lcn = alcn + alen;
+up_write:
 	up_write(&wnd->rw_lock);
 	return err;
 }
 
 /*
- * ntfs_extend_mft
+ * ntfs_extend_mft - Allocate additional MFT records.
  *
- * allocates additional MFT records
- * sbi->mft.bitmap is locked for write
+ * sbi->mft.bitmap is locked for write.
  *
  * NOTE: recursive:
  *	ntfs_look_free_mft ->
@@ -487,8 +462,9 @@ out:
  *	ni_ins_attr_ext ->
  *	ntfs_look_free_mft ->
  *	ntfs_extend_mft
- * To avoid recursive always allocate space for two new mft records
- * see attrib.c: "at least two mft to avoid recursive loop"
+ *
+ * To avoid recursive always allocate space for two new MFT records
+ * see attrib.c: "at least two MFT to avoid recursive loop".
  */
 static int ntfs_extend_mft(struct ntfs_sb_info *sbi)
 {
@@ -502,7 +478,7 @@ static int ntfs_extend_mft(struct ntfs_sb_info *sbi)
 	new_mft_total = (wnd->nbits + MFT_INCREASE_CHUNK + 127) & (CLST)~127;
 	new_mft_bytes = (u64)new_mft_total << sbi->record_bits;
 
-	/* Step 1: Resize $MFT::DATA */
+	/* Step 1: Resize $MFT::DATA. */
 	down_write(&ni->file.run_lock);
 	err = attr_set_size(ni, ATTR_DATA, NULL, 0, &ni->file.run,
 			    new_mft_bytes, NULL, false, &attr);
@@ -516,13 +492,13 @@ static int ntfs_extend_mft(struct ntfs_sb_info *sbi)
 	new_mft_total = le64_to_cpu(attr->nres.alloc_size) >> sbi->record_bits;
 	ni->mi.dirty = true;
 
-	/* Step 2: Resize $MFT::BITMAP */
+	/* Step 2: Resize $MFT::BITMAP. */
 	new_bitmap_bytes = bitmap_size(new_mft_total);
 
 	err = attr_set_size(ni, ATTR_BITMAP, NULL, 0, &sbi->mft.bitmap.run,
 			    new_bitmap_bytes, &new_bitmap_bytes, true, NULL);
 
-	/* Refresh Mft Zone if necessary */
+	/* Refresh MFT Zone if necessary. */
 	down_write_nested(&sbi->used.bitmap.rw_lock, BITMAP_MUTEX_CLUSTERS);
 
 	ntfs_refresh_zone(sbi);
@@ -546,9 +522,7 @@ out:
 }
 
 /*
- * ntfs_look_free_mft
- *
- * looks for a free MFT record
+ * ntfs_look_free_mft - Look for a free MFT record.
  */
 int ntfs_look_free_mft(struct ntfs_sb_info *sbi, CLST *rno, bool mft,
 		       struct ntfs_inode *ni, struct mft_inode **mi)
@@ -569,7 +543,7 @@ int ntfs_look_free_mft(struct ntfs_sb_info *sbi, CLST *rno, bool mft,
 
 	zlen = wnd_zone_len(wnd);
 
-	/* Always reserve space for MFT */
+	/* Always reserve space for MFT. */
 	if (zlen) {
 		if (mft) {
 			zbit = wnd_zone_bit(wnd);
@@ -579,7 +553,7 @@ int ntfs_look_free_mft(struct ntfs_sb_info *sbi, CLST *rno, bool mft,
 		goto found;
 	}
 
-	/* No MFT zone. find the nearest to '0' free MFT */
+	/* No MFT zone. Find the nearest to '0' free MFT. */
 	if (!wnd_find(wnd, 1, MFT_REC_FREE, 0, &zbit)) {
 		/* Resize MFT */
 		mft_total = wnd->nbits;
@@ -598,10 +572,10 @@ int ntfs_look_free_mft(struct ntfs_sb_info *sbi, CLST *rno, bool mft,
 		/*
 		 * Look for free record reserved area [11-16) ==
 		 * [MFT_REC_RESERVED, MFT_REC_FREE ) MFT bitmap always
-		 * marks it as used
+		 * marks it as used.
 		 */
 		if (!sbi->mft.reserved_bitmap) {
-			/* Once per session create internal bitmap for 5 bits */
+			/* Once per session create internal bitmap for 5 bits. */
 			sbi->mft.reserved_bitmap = 0xFF;
 
 			ref.high = 0;
@@ -668,7 +642,7 @@ reserve_mft:
 		while (zlen > 1 && !wnd_is_free(wnd, zbit, zlen))
 			zlen -= 1;
 
-		/* [zbit, zbit + zlen) will be used for Mft itself */
+		/* [zbit, zbit + zlen) will be used for MFT itself. */
 		from = sbi->mft.used;
 		if (from < zbit)
 			from = zbit;
@@ -689,7 +663,7 @@ reserve_mft:
 
 found:
 	if (!mft) {
-		/* The request to get record for general purpose */
+		/* The request to get record for general purpose. */
 		if (sbi->mft.next_free < MFT_REC_USER)
 			sbi->mft.next_free = MFT_REC_USER;
 
@@ -714,7 +688,7 @@ found:
 		goto out;
 	}
 
-	/* We have found a record that are not reserved for next MFT */
+	/* We have found a record that are not reserved for next MFT. */
 	if (*rno >= MFT_REC_FREE)
 		wnd_set_used(wnd, *rno, 1);
 	else if (*rno >= MFT_REC_RESERVED && sbi->mft.reserved_bitmap_inited)
@@ -728,9 +702,7 @@ out:
 }
 
 /*
- * ntfs_mark_rec_free
- *
- * marks record as free
+ * ntfs_mark_rec_free - Mark record as free.
  */
 void ntfs_mark_rec_free(struct ntfs_sb_info *sbi, CLST rno)
 {
@@ -759,10 +731,9 @@ out:
 }
 
 /*
- * ntfs_clear_mft_tail
+ * ntfs_clear_mft_tail - Format empty records [from, to).
  *
- * formats empty records [from, to)
- * sbi->mft.bitmap is locked for write
+ * sbi->mft.bitmap is locked for write.
  */
 int ntfs_clear_mft_tail(struct ntfs_sb_info *sbi, size_t from, size_t to)
 {
@@ -801,12 +772,11 @@ out:
 }
 
 /*
- * ntfs_refresh_zone
+ * ntfs_refresh_zone - Refresh MFT zone.
  *
- * refreshes Mft zone
- * sbi->used.bitmap is locked for rw
- * sbi->mft.bitmap is locked for write
- * sbi->mft.ni->file.run_lock for write
+ * sbi->used.bitmap is locked for rw.
+ * sbi->mft.bitmap is locked for write.
+ * sbi->mft.ni->file.run_lock for write.
  */
 int ntfs_refresh_zone(struct ntfs_sb_info *sbi)
 {
@@ -815,14 +785,14 @@ int ntfs_refresh_zone(struct ntfs_sb_info *sbi)
 	struct wnd_bitmap *wnd = &sbi->used.bitmap;
 	struct ntfs_inode *ni = sbi->mft.ni;
 
-	/* Do not change anything unless we have non empty Mft zone */
+	/* Do not change anything unless we have non empty MFT zone. */
 	if (wnd_zone_len(wnd))
 		return 0;
 
 	/*
-	 * Compute the mft zone at two steps
-	 * It would be nice if we are able to allocate
-	 * 1/8 of total clusters for MFT but not more then 512 MB
+	 * Compute the MFT zone at two steps.
+	 * It would be nice if we are able to allocate 1/8 of
+	 * total clusters for MFT but not more then 512 MB.
 	 */
 	zone_limit = (512 * 1024 * 1024) >> sbi->cluster_bits;
 	zone_max = wnd->nbits >> 3;
@@ -835,29 +805,27 @@ int ntfs_refresh_zone(struct ntfs_sb_info *sbi)
 	if (!run_lookup_entry(&ni->file.run, vcn - 1, &lcn, &len, NULL))
 		lcn = SPARSE_LCN;
 
-	/* We should always find Last Lcn for MFT */
+	/* We should always find Last Lcn for MFT. */
 	if (lcn == SPARSE_LCN)
 		return -EINVAL;
 
 	lcn_s = lcn + 1;
 
-	/* Try to allocate clusters after last MFT run */
+	/* Try to allocate clusters after last MFT run. */
 	zlen = wnd_find(wnd, zone_max, lcn_s, 0, &lcn_s);
 	if (!zlen) {
 		ntfs_notice(sbi->sb, "MftZone: unavailable");
 		return 0;
 	}
 
-	/* Truncate too large zone */
+	/* Truncate too large zone. */
 	wnd_zone_set(wnd, lcn_s, zlen);
 
 	return 0;
 }
 
 /*
- * ntfs_update_mftmirr
- *
- * updates $MFTMirr data
+ * ntfs_update_mftmirr - Update $MFTMirr data.
  */
 int ntfs_update_mftmirr(struct ntfs_sb_info *sbi, int wait)
 {
@@ -920,9 +888,9 @@ out:
 /*
  * ntfs_set_state
  *
- * mount: ntfs_set_state(NTFS_DIRTY_DIRTY)
- * umount: ntfs_set_state(NTFS_DIRTY_CLEAR)
- * ntfs error: ntfs_set_state(NTFS_DIRTY_ERROR)
+ * Mount: ntfs_set_state(NTFS_DIRTY_DIRTY)
+ * Umount: ntfs_set_state(NTFS_DIRTY_CLEAR)
+ * NTFS error: ntfs_set_state(NTFS_DIRTY_ERROR)
  */
 int ntfs_set_state(struct ntfs_sb_info *sbi, enum NTFS_DIRTY_FLAGS dirty)
 {
@@ -933,14 +901,14 @@ int ntfs_set_state(struct ntfs_sb_info *sbi, enum NTFS_DIRTY_FLAGS dirty)
 	struct ntfs_inode *ni;
 
 	/*
-	 * do not change state if fs was real_dirty
-	 * do not change state if fs already dirty(clear)
-	 * do not change any thing if mounted read only
+	 * Do not change state if fs was real_dirty.
+	 * Do not change state if fs already dirty(clear).
+	 * Do not change any thing if mounted read only.
 	 */
 	if (sbi->volume.real_dirty || sb_rdonly(sbi->sb))
 		return 0;
 
-	/* Check cached value */
+	/* Check cached value. */
 	if ((dirty == NTFS_DIRTY_CLEAR ? 0 : VOLUME_FLAG_DIRTY) ==
 	    (sbi->volume.flags & VOLUME_FLAG_DIRTY))
 		return 0;
@@ -975,7 +943,7 @@ int ntfs_set_state(struct ntfs_sb_info *sbi, enum NTFS_DIRTY_FLAGS dirty)
 		info->flags &= ~VOLUME_FLAG_DIRTY;
 		break;
 	}
-	/* cache current volume flags*/
+	/* Cache current volume flags. */
 	sbi->volume.flags = info->flags;
 	mi->dirty = true;
 	err = 0;
@@ -986,16 +954,23 @@ out:
 		return err;
 
 	mark_inode_dirty(&ni->vfs_inode);
-	/*verify(!ntfs_update_mftmirr()); */
-	err = sync_inode_metadata(&ni->vfs_inode, 1);
+	/* verify(!ntfs_update_mftmirr()); */
+
+	/*
+	 * If we used wait=1, sync_inode_metadata waits for the io for the
+	 * inode to finish. It hangs when media is removed.
+	 * So wait=0 is sent down to sync_inode_metadata
+	 * and filemap_fdatawrite is used for the data blocks.
+	 */
+	err = sync_inode_metadata(&ni->vfs_inode, 0);
+	if (!err)
+		err = filemap_fdatawrite(ni->vfs_inode.i_mapping);
 
 	return err;
 }
 
 /*
- * security_hash
- *
- * calculates a hash of security descriptor
+ * security_hash - Calculates a hash of security descriptor.
  */
 static inline __le32 security_hash(const void *sd, size_t bytes)
 {
@@ -1102,7 +1077,7 @@ int ntfs_sb_write(struct super_block *sb, u64 lbo, size_t bytes,
 }
 
 int ntfs_sb_write_run(struct ntfs_sb_info *sbi, const struct runs_tree *run,
-		      u64 vbo, const void *buf, size_t bytes)
+		      u64 vbo, const void *buf, size_t bytes, int sync)
 {
 	struct super_block *sb = sbi->sb;
 	u8 cluster_bits = sbi->cluster_bits;
@@ -1121,8 +1096,8 @@ int ntfs_sb_write_run(struct ntfs_sb_info *sbi, const struct runs_tree *run,
 	len = ((u64)clen << cluster_bits) - off;
 
 	for (;;) {
-		u32 op = len < bytes ? len : bytes;
-		int err = ntfs_sb_write(sb, lbo, op, buf, 0);
+		u32 op = min_t(u64, len, bytes);
+		int err = ntfs_sb_write(sb, lbo, op, buf, sync);
 
 		if (err)
 			return err;
@@ -1181,13 +1156,13 @@ int ntfs_read_run_nb(struct ntfs_sb_info *sbi, const struct runs_tree *run,
 	struct buffer_head *bh;
 
 	if (!run) {
-		/* first reading of $Volume + $MFTMirr + $LogFile goes here*/
+		/* First reading of $Volume + $MFTMirr + $LogFile goes here. */
 		if (vbo > MFT_REC_VOL * sbi->record_size) {
 			err = -ENOENT;
 			goto out;
 		}
 
-		/* use absolute boot's 'MFTCluster' to read record */
+		/* Use absolute boot's 'MFTCluster' to read record. */
 		lbo = vbo + sbi->mft.lbo;
 		len = sbi->record_size;
 	} else if (!run_lookup_entry(run, vcn, &lcn, &clen, &idx)) {
@@ -1278,7 +1253,11 @@ out:
 	return err;
 }
 
-/* Returns < 0 if error, 0 if ok, '-E_NTFS_FIXUP' if need to update fixups */
+/*
+ * ntfs_read_bh
+ *
+ * Return: < 0 if error, 0 if ok, -E_NTFS_FIXUP if need to update fixups.
+ */
 int ntfs_read_bh(struct ntfs_sb_info *sbi, const struct runs_tree *run, u64 vbo,
 		 struct NTFS_RECORD_HEADER *rhdr, u32 bytes,
 		 struct ntfs_buffers *nb)
@@ -1318,7 +1297,7 @@ int ntfs_get_bh(struct ntfs_sb_info *sbi, const struct runs_tree *run, u64 vbo,
 	nb->off = off = lbo & (blocksize - 1);
 
 	for (;;) {
-		u32 len32 = len < bytes ? len : bytes;
+		u32 len32 = min_t(u64, len, bytes);
 		sector_t block = lbo >> sb->s_blocksize_bits;
 
 		do {
@@ -1475,7 +1454,9 @@ static inline struct bio *ntfs_alloc_bio(u32 nr_vecs)
 	return bio;
 }
 
-/* read/write pages from/to disk*/
+/*
+ * ntfs_bio_pages - Read/write pages from/to disk.
+ */
 int ntfs_bio_pages(struct ntfs_sb_info *sbi, const struct runs_tree *run,
 		   struct page **pages, u32 nr_pages, u64 vbo, u32 bytes,
 		   u32 op)
@@ -1497,7 +1478,7 @@ int ntfs_bio_pages(struct ntfs_sb_info *sbi, const struct runs_tree *run,
 
 	blk_start_plug(&plug);
 
-	/* align vbo and bytes to be 512 bytes aligned */
+	/* Align vbo and bytes to be 512 bytes aligned. */
 	lbo = (vbo + bytes + 511) & ~511ull;
 	vbo = vbo & ~511ull;
 	bytes = lbo - vbo;
@@ -1576,9 +1557,10 @@ out:
 }
 
 /*
- * Helper for ntfs_loadlog_and_replay
- * fill on-disk logfile range by (-1)
- * this means empty logfile
+ * ntfs_bio_fill_1 - Helper for ntfs_loadlog_and_replay().
+ *
+ * Fill on-disk logfile range by (-1)
+ * this means empty logfile.
  */
 int ntfs_bio_fill_1(struct ntfs_sb_info *sbi, const struct runs_tree *run)
 {
@@ -1610,14 +1592,14 @@ int ntfs_bio_fill_1(struct ntfs_sb_info *sbi, const struct runs_tree *run)
 	}
 
 	/*
-	 * TODO: try blkdev_issue_write_same
+	 * TODO: Try blkdev_issue_write_same.
 	 */
 	blk_start_plug(&plug);
 	do {
 		lbo = (u64)lcn << cluster_bits;
 		len = (u64)clen << cluster_bits;
 new_bio:
-		new = ntfs_alloc_bio(BIO_MAX_PAGES);
+		new = ntfs_alloc_bio(BIO_MAX_VECS);
 		if (!new) {
 			err = -ENOMEM;
 			break;
@@ -1707,8 +1689,8 @@ out:
 
 /*
  * O:BAG:BAD:(A;OICI;FA;;;WD)
- * owner S-1-5-32-544 (Administrators)
- * group S-1-5-32-544 (Administrators)
+ * Owner S-1-5-32-544 (Administrators)
+ * Group S-1-5-32-544 (Administrators)
  * ACE: allow S-1-1-0 (Everyone) with FILE_ALL_ACCESS
  */
 const u8 s_default_security[] __aligned(8) = {
@@ -1725,12 +1707,13 @@ static_assert(sizeof(s_default_security) == 0x50);
 
 static inline u32 sid_length(const struct SID *sid)
 {
-	return offsetof(struct SID, SubAuthority[0]) +
-	       (sid->SubAuthorityCount * sizeof(u32));
+	return struct_size(sid, SubAuthority, sid->SubAuthorityCount);
 }
 
 /*
- * Thanks Mark Harmstone for idea
+ * is_acl_valid
+ *
+ * Thanks Mark Harmstone for idea.
  */
 static bool is_acl_valid(const struct ACL *acl, u32 len)
 {
@@ -1738,8 +1721,15 @@ static bool is_acl_valid(const struct ACL *acl, u32 len)
 	u32 i;
 	u16 ace_count, ace_size;
 
-	if (acl->AclRevision != ACL_REVISION)
+	if (acl->AclRevision != ACL_REVISION &&
+	    acl->AclRevision != ACL_REVISION_DS) {
+		/*
+		 * This value should be ACL_REVISION, unless the ACL contains an
+		 * object-specific ACE, in which case this value must be ACL_REVISION_DS.
+		 * All ACEs in an ACL must be at the same revision level.
+		 */
 		return false;
+	}
 
 	if (acl->Sbz1)
 		return false;
@@ -1751,7 +1741,6 @@ static bool is_acl_valid(const struct ACL *acl, u32 len)
 		return false;
 
 	len -= sizeof(struct ACL);
-
 	ace = (struct ACE_HEADER *)&acl[1];
 	ace_count = le16_to_cpu(acl->AceCount);
 
@@ -1764,7 +1753,6 @@ static bool is_acl_valid(const struct ACL *acl, u32 len)
 			return false;
 
 		len -= ace_size;
-
 		ace = Add2Ptr(ace, ace_size);
 	}
 
@@ -1841,9 +1829,7 @@ bool is_sd_valid(const struct SECURITY_DESCRIPTOR_RELATIVE *sd, u32 len)
 }
 
 /*
- * ntfs_security_init
- *
- * loads and parse $Secure
+ * ntfs_security_init - Load and parse $Secure.
  */
 int ntfs_security_init(struct ntfs_sb_info *sbi)
 {
@@ -1855,7 +1841,7 @@ int ntfs_security_init(struct ntfs_sb_info *sbi)
 	struct ATTRIB *attr;
 	struct ATTR_LIST_ENTRY *le;
 	u64 sds_size;
-	size_t cnt, off;
+	size_t off;
 	struct NTFS_DE *ne;
 	struct NTFS_DE_SII *sii_e;
 	struct ntfs_fnd *fnd_sii = NULL;
@@ -1924,13 +1910,12 @@ int ntfs_security_init(struct ntfs_sb_info *sbi)
 
 	sds_size = inode->i_size;
 
-	/* Find the last valid Id */
+	/* Find the last valid Id. */
 	sbi->security.next_id = SECURITY_ID_FIRST;
-	/* Always write new security at the end of bucket */
+	/* Always write new security at the end of bucket. */
 	sbi->security.next_off =
-		Quad2Align(sds_size - SecurityDescriptorsBlockSize);
+		ALIGN(sds_size - SecurityDescriptorsBlockSize, 16);
 
-	cnt = 0;
 	off = 0;
 	ne = NULL;
 
@@ -1948,8 +1933,6 @@ int ntfs_security_init(struct ntfs_sb_info *sbi)
 		next_id = le32_to_cpu(sii_e->sec_id) + 1;
 		if (next_id >= sbi->security.next_id)
 			sbi->security.next_id = next_id;
-
-		cnt += 1;
 	}
 
 	sbi->security.ni = ni;
@@ -1962,9 +1945,7 @@ out:
 }
 
 /*
- * ntfs_get_security_by_id
- *
- * reads security descriptor by id
+ * ntfs_get_security_by_id - Read security descriptor by id.
  */
 int ntfs_get_security_by_id(struct ntfs_sb_info *sbi, __le32 security_id,
 			    struct SECURITY_DESCRIPTOR_RELATIVE **sd,
@@ -1997,7 +1978,7 @@ int ntfs_get_security_by_id(struct ntfs_sb_info *sbi, __le32 security_id,
 		goto out;
 	}
 
-	/* Try to find this SECURITY descriptor in SII indexes */
+	/* Try to find this SECURITY descriptor in SII indexes. */
 	err = indx_find(indx, ni, root_sii, &security_id, sizeof(security_id),
 			NULL, &diff, (struct NTFS_DE **)&sii_e, fnd_sii);
 	if (err)
@@ -2013,16 +1994,14 @@ int ntfs_get_security_by_id(struct ntfs_sb_info *sbi, __le32 security_id,
 	}
 
 	if (t32 > SIZEOF_SECURITY_HDR + 0x10000) {
-		/*
-		 * looks like too big security. 0x10000 - is arbitrary big number
-		 */
+		/* Looks like too big security. 0x10000 - is arbitrary big number. */
 		err = -EFBIG;
 		goto out;
 	}
 
 	*size = t32 - SIZEOF_SECURITY_HDR;
 
-	p = ntfs_malloc(*size);
+	p = kmalloc(*size, GFP_NOFS);
 	if (!p) {
 		err = -ENOMEM;
 		goto out;
@@ -2050,7 +2029,7 @@ int ntfs_get_security_by_id(struct ntfs_sb_info *sbi, __le32 security_id,
 	p = NULL;
 
 out:
-	ntfs_free(p);
+	kfree(p);
 	fnd_put(fnd_sii);
 	ni_unlock(ni);
 
@@ -2058,9 +2037,7 @@ out:
 }
 
 /*
- * ntfs_insert_security
- *
- * inserts security descriptor into $Secure::SDS
+ * ntfs_insert_security - Insert security descriptor into $Secure::SDS.
  *
  * SECURITY Descriptor Stream data is organized into chunks of 256K bytes
  * and it contains a mirror copy of each security descriptor.  When writing
@@ -2083,7 +2060,7 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 	struct NTFS_DE_SII sii_e;
 	struct SECURITY_HDR *d_security;
 	u32 new_sec_size = size_sd + SIZEOF_SECURITY_HDR;
-	u32 aligned_sec_size = Quad2Align(new_sec_size);
+	u32 aligned_sec_size = ALIGN(new_sec_size, 16);
 	struct SECURITY_KEY hash_key;
 	struct ntfs_fnd *fnd_sdh = NULL;
 	const struct INDEX_ROOT *root_sdh;
@@ -2101,8 +2078,8 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 		*inserted = false;
 	*security_id = SECURITY_ID_INVALID;
 
-	/* Allocate a temporal buffer*/
-	d_security = ntfs_zalloc(aligned_sec_size);
+	/* Allocate a temporal buffer. */
+	d_security = kzalloc(aligned_sec_size, GFP_NOFS);
 	if (!d_security)
 		return -ENOMEM;
 
@@ -2127,8 +2104,8 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 	}
 
 	/*
-	 * Check if such security already exists
-	 * use "SDH" and hash -> to get the offset in "SDS"
+	 * Check if such security already exists.
+	 * Use "SDH" and hash -> to get the offset in "SDS".
 	 */
 	err = indx_find(indx_sdh, ni, root_sdh, &hash_key, sizeof(hash_key),
 			&d_security->key.sec_id, &diff, (struct NTFS_DE **)&e,
@@ -2148,7 +2125,7 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 			    d_security->key.hash == hash_key.hash &&
 			    !memcmp(d_security + 1, sd, size_sd)) {
 				*security_id = d_security->key.sec_id;
-				/*such security already exists*/
+				/* Such security already exists. */
 				err = 0;
 				goto out;
 			}
@@ -2163,17 +2140,17 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 			break;
 	}
 
-	/* Zero unused space */
+	/* Zero unused space. */
 	next = sbi->security.next_off & (SecurityDescriptorsBlockSize - 1);
 	left = SecurityDescriptorsBlockSize - next;
 
-	/* Zero gap until SecurityDescriptorsBlockSize */
+	/* Zero gap until SecurityDescriptorsBlockSize. */
 	if (left < new_sec_size) {
-		/* zero "left" bytes from sbi->security.next_off */
+		/* Zero "left" bytes from sbi->security.next_off. */
 		sbi->security.next_off += SecurityDescriptorsBlockSize + left;
 	}
 
-	/* Zero tail of previous security */
+	/* Zero tail of previous security. */
 	//used = ni->vfs_inode.i_size & (SecurityDescriptorsBlockSize - 1);
 
 	/*
@@ -2186,16 +2163,16 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 	 *  zero "tozero" bytes from sbi->security.next_off - tozero
 	 */
 
-	/* format new security descriptor */
+	/* Format new security descriptor. */
 	d_security->key.hash = hash_key.hash;
 	d_security->key.sec_id = cpu_to_le32(sbi->security.next_id);
 	d_security->off = cpu_to_le64(sbi->security.next_off);
 	d_security->size = cpu_to_le32(new_sec_size);
 	memcpy(d_security + 1, sd, size_sd);
 
-	/* Write main SDS bucket */
+	/* Write main SDS bucket. */
 	err = ntfs_sb_write_run(sbi, &ni->file.run, sbi->security.next_off,
-				d_security, aligned_sec_size);
+				d_security, aligned_sec_size, 0);
 
 	if (err)
 		goto out;
@@ -2211,13 +2188,13 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 			goto out;
 	}
 
-	/* Write copy SDS bucket */
+	/* Write copy SDS bucket. */
 	err = ntfs_sb_write_run(sbi, &ni->file.run, mirr_off, d_security,
-				aligned_sec_size);
+				aligned_sec_size, 0);
 	if (err)
 		goto out;
 
-	/* Fill SII entry */
+	/* Fill SII entry. */
 	sii_e.de.view.data_off =
 		cpu_to_le16(offsetof(struct NTFS_DE_SII, sec_hdr));
 	sii_e.de.view.data_size = cpu_to_le16(SIZEOF_SECURITY_HDR);
@@ -2229,11 +2206,11 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 	sii_e.sec_id = d_security->key.sec_id;
 	memcpy(&sii_e.sec_hdr, d_security, SIZEOF_SECURITY_HDR);
 
-	err = indx_insert_entry(indx_sii, ni, &sii_e.de, NULL, NULL);
+	err = indx_insert_entry(indx_sii, ni, &sii_e.de, NULL, NULL, 0);
 	if (err)
 		goto out;
 
-	/* Fill SDH entry */
+	/* Fill SDH entry. */
 	sdh_e.de.view.data_off =
 		cpu_to_le16(offsetof(struct NTFS_DE_SDH, sec_hdr));
 	sdh_e.de.view.data_size = cpu_to_le16(SIZEOF_SECURITY_HDR);
@@ -2250,7 +2227,7 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 
 	fnd_clear(fnd_sdh);
 	err = indx_insert_entry(indx_sdh, ni, &sdh_e.de, (void *)(size_t)1,
-				fnd_sdh);
+				fnd_sdh, 0);
 	if (err)
 		goto out;
 
@@ -2258,7 +2235,7 @@ int ntfs_insert_security(struct ntfs_sb_info *sbi,
 	if (inserted)
 		*inserted = true;
 
-	/* Update Id and offset for next descriptor */
+	/* Update Id and offset for next descriptor. */
 	sbi->security.next_id += 1;
 	sbi->security.next_off += aligned_sec_size;
 
@@ -2266,15 +2243,13 @@ out:
 	fnd_put(fnd_sdh);
 	mark_inode_dirty(&ni->vfs_inode);
 	ni_unlock(ni);
-	ntfs_free(d_security);
+	kfree(d_security);
 
 	return err;
 }
 
 /*
- * ntfs_reparse_init
- *
- * loads and parse $Extend/$Reparse
+ * ntfs_reparse_init - Load and parse $Extend/$Reparse.
  */
 int ntfs_reparse_init(struct ntfs_sb_info *sbi)
 {
@@ -2312,9 +2287,7 @@ out:
 }
 
 /*
- * ntfs_objid_init
- *
- * loads and parse $Extend/$ObjId
+ * ntfs_objid_init - Load and parse $Extend/$ObjId.
  */
 int ntfs_objid_init(struct ntfs_sb_info *sbi)
 {
@@ -2392,7 +2365,7 @@ int ntfs_insert_reparse(struct ntfs_sb_info *sbi, __le32 rtag,
 
 	mutex_lock_nested(&ni->ni_lock, NTFS_INODE_MUTEX_REPARSE);
 
-	err = indx_insert_entry(indx, ni, &re.de, NULL, NULL);
+	err = indx_insert_entry(indx, ni, &re.de, NULL, NULL, 0);
 
 	mark_inode_dirty(&ni->vfs_inode);
 	ni_unlock(ni);
@@ -2436,14 +2409,14 @@ int ntfs_remove_reparse(struct ntfs_sb_info *sbi, __le32 rtag,
 		goto out;
 	}
 
-	/* 1 - forces to ignore rkey.ReparseTag when comparing keys */
+	/* 1 - forces to ignore rkey.ReparseTag when comparing keys. */
 	err = indx_find(indx, ni, root_r, &rkey, sizeof(rkey), (void *)1, &diff,
 			(struct NTFS_DE **)&re, fnd);
 	if (err)
 		goto out;
 
 	if (memcmp(&re->key.ref, ref, sizeof(*ref))) {
-		/* Impossible. Looks like volume corrupt?*/
+		/* Impossible. Looks like volume corrupt? */
 		goto out;
 	}
 
@@ -2515,9 +2488,7 @@ out:
 }
 
 /*
- * run_deallocate
- *
- * deallocate clusters
+ * run_deallocate - Deallocate clusters.
  */
 int run_deallocate(struct ntfs_sb_info *sbi, struct runs_tree *run, bool trim)
 {
