@@ -15,6 +15,7 @@ struct jupiter {
 	struct acpi_device *adev;
 	struct device *hwmon;
 	void *regmap;
+	long fan_target;
 };
 
 static ssize_t
@@ -50,7 +51,6 @@ JUPITER_ATTR_WO(target_cpu_temp, "STCT", U8_MAX / 2);
 JUPITER_ATTR_WO(gain, "SGAN", U16_MAX);
 JUPITER_ATTR_WO(ramp_rate, "SFRR", U8_MAX);
 JUPITER_ATTR_WO(hysteresis, "SHTS",  U16_MAX);
-JUPITER_ATTR_WO(speed, "FANS", U16_MAX);
 JUPITER_ATTR_WO(maximum_battery_charge_rate, "CHGR", U16_MAX);
 JUPITER_ATTR_WO(recalculate, "SCHG", U16_MAX);
 
@@ -118,7 +118,6 @@ static struct attribute *jupiter_attributes[] = {
 	&dev_attr_gain.attr,
 	&dev_attr_ramp_rate.attr,
 	&dev_attr_hysteresis.attr,
-	&dev_attr_speed.attr,
 	&dev_attr_maximum_battery_charge_rate.attr,
 	&dev_attr_recalculate.attr,
 	&dev_attr_power_cycle_display.attr,
@@ -152,24 +151,64 @@ static const struct attribute_group *jupiter_groups[] = {
 	NULL
 };
 
-static int jupiter_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
-			      u32 attr, int channel, long *temp)
+static int jupiter_read_fan_speed(struct jupiter *jup, long *speed)
 {
+	unsigned long long val;
 
+	if (ACPI_FAILURE(acpi_evaluate_integer(jup->adev->handle,
+					       "FANR", NULL, &val)))
+		return -EIO;
+
+	*speed = val;
+	return 0;
+}
+
+static int jupiter_hwmon_read(struct device *dev, enum hwmon_sensor_types type,
+			      u32 attr, int channel, long *out)
+{
 	struct jupiter *jup = dev_get_drvdata(dev);
 	unsigned long long val;
 
-	if (attr != hwmon_temp_input)
-		return -EOPNOTSUPP;
+	switch (type) {
+	case hwmon_temp:
+		if (attr != hwmon_temp_input)
+			return -EOPNOTSUPP;
 
-	if (ACPI_FAILURE(acpi_evaluate_integer(jup->adev->handle,
-					       "BATT", NULL, &val)))
-		return -EIO;
-	/*
-	 * Assuming BATT returns deg C we need to mutiply it by 1000
-	 * to convert to mC
-	 */
-	*temp = val * 1000;
+		if (ACPI_FAILURE(acpi_evaluate_integer(jup->adev->handle,
+						       "BATT", NULL, &val)))
+			return -EIO;
+		/*
+		 * Assuming BATT returns deg C we need to mutiply it
+		 * by 1000 to convert to mC
+		 */
+		*out = val * 1000;
+		break;
+	case hwmon_fan:
+		switch (attr) {
+		case hwmon_fan_input:
+			return jupiter_read_fan_speed(jup, out);
+		case hwmon_fan_target:
+			*out = jup->fan_target;
+			break;
+		case hwmon_fan_fault:
+			if (ACPI_FAILURE(acpi_evaluate_integer(
+						 jup->adev->handle,
+						 "FANC", NULL, &val)))
+				return -EIO;
+			/*
+			 * FANC (Fan check):
+			 * 0: Abnormal
+			 * 1: Normal
+			 */
+			*out = !val;
+			break;
+		default:
+			return -EOPNOTSUPP;
+		}
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
 
 	return 0;
 }
@@ -178,11 +217,37 @@ static int
 jupiter_hwmon_read_string(struct device *dev, enum hwmon_sensor_types type,
 			  u32 attr, int channel, const char **str)
 {
-	if (type != hwmon_temp ||
-	    attr != hwmon_temp_label)
+	switch (type) {
+	case hwmon_temp:
+		*str = "Battery Temp";
+		break;
+	case hwmon_fan:
+		*str = "System Fan";
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+
+static int jupiter_hwmon_write(struct device *dev, enum hwmon_sensor_types type,
+			       u32 attr, int channel, long val)
+{
+	struct jupiter *jup = dev_get_drvdata(dev);
+
+	if (type != hwmon_fan ||
+	    attr != hwmon_fan_target)
 		return -EOPNOTSUPP;
 
-	*str = "Battery Temp";
+	if (val > U16_MAX)
+		return -EINVAL;
+
+	jup->fan_target = val;
+
+	if (ACPI_FAILURE(acpi_execute_simple_method(jup->adev->handle,
+						    "FANS", val)))
+		return -EIO;
 
 	return 0;
 }
@@ -191,12 +256,19 @@ static umode_t
 jupiter_hwmon_is_visible(const void *data, enum hwmon_sensor_types type,
 			 u32 attr, int channel)
 {
+	if (type == hwmon_fan &&
+	    attr == hwmon_fan_target)
+		return 0644;
+
 	return 0444;
 }
 
 static const struct hwmon_channel_info *jupiter_info[] = {
 	HWMON_CHANNEL_INFO(temp,
 			   HWMON_T_INPUT | HWMON_T_LABEL),
+	HWMON_CHANNEL_INFO(fan,
+			   HWMON_F_INPUT | HWMON_F_LABEL |
+			   HWMON_F_TARGET | HWMON_F_FAULT),
 	NULL
 };
 
@@ -204,6 +276,7 @@ static const struct hwmon_ops jupiter_hwmon_ops = {
 	.is_visible = jupiter_hwmon_is_visible,
 	.read = jupiter_hwmon_read,
 	.read_string = jupiter_hwmon_read_string,
+	.write = jupiter_hwmon_write,
 };
 
 static const struct hwmon_chip_info jupiter_chip_info = {
@@ -266,6 +339,14 @@ static int jupiter_probe(struct platform_device *pdev)
 		dev_err(dev, "Device is not ready\n");
 		return -EINVAL;
 	}
+
+	/*
+	 * Our ACPI interface doesn't expose a method to read current
+	 * fan target, so we use current fan speed as an
+	 * approximation.
+	 */
+	if (jupiter_read_fan_speed(jup, &jup->fan_target))
+		dev_warn(dev, "Failed to read fan speed");
 
 	jup->hwmon = devm_hwmon_device_register_with_info(dev,
 							  "jupiter",
