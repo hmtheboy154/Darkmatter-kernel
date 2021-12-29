@@ -172,21 +172,9 @@ static int __init init_zero_pfn(void)
 }
 early_initcall(init_zero_pfn);
 
-/*
- * Only trace rss_stat when there is a 512kb cross over.
- * Smaller changes may be lost unless every small change is
- * crossing into or returning to a 512kb boundary.
- */
-#define TRACE_MM_COUNTER_THRESHOLD 128
-
-void mm_trace_rss_stat(struct mm_struct *mm, int member, long count,
-		       long value)
+void mm_trace_rss_stat(struct mm_struct *mm, int member, long count)
 {
-	long thresh_mask = ~(TRACE_MM_COUNTER_THRESHOLD - 1);
-
-	/* Threshold roll-over, trace it */
-	if ((count & thresh_mask) != ((count - value) & thresh_mask))
-		trace_rss_stat(mm, member, count);
+	trace_rss_stat(mm, member, count);
 }
 EXPORT_SYMBOL_GPL(mm_trace_rss_stat);
 
@@ -3160,7 +3148,7 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 	 */
 	if (!pte_map_lock(vmf)) {
 		ret = VM_FAULT_RETRY;
-		goto out_free_new;
+		goto out_invalidate_end;
 	}
 	if (likely(pte_same(*vmf->pte, vmf->orig_pte))) {
 		if (old_page) {
@@ -3248,6 +3236,8 @@ static vm_fault_t wp_page_copy(struct vm_fault *vmf)
 		put_page(old_page);
 	}
 	return page_copied ? VM_FAULT_WRITE : 0;
+out_invalidate_end:
+	mmu_notifier_invalidate_range_only_end(&range);
 out_free_new:
 	put_page(new_page);
 out:
@@ -4707,8 +4697,19 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf)
 		goto unlock;
 	}
 	if (vmf->flags & FAULT_FLAG_WRITE) {
-		if (!pte_write(entry))
-			return do_wp_page(vmf);
+		if (!pte_write(entry)) {
+			if (!(vmf->flags & FAULT_FLAG_SPECULATIVE))
+				return do_wp_page(vmf);
+
+			if (!mmu_notifier_trylock(vmf->vma->vm_mm)) {
+				ret = VM_FAULT_RETRY;
+				goto unlock;
+			}
+
+			ret = do_wp_page(vmf);
+			mmu_notifier_unlock(vmf->vma->vm_mm);
+			return ret;
+		}
 		entry = pte_mkdirty(entry);
 	}
 	entry = pte_mkyoung(entry);
