@@ -10,12 +10,28 @@
 #include <linux/hwmon.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
+#include <linux/extcon-provider.h>
+
+#define ACPI_JUPITER_NOTIFY_STATUS	0x80
+
+/* 0 - port connected, 1 -port disconnected */
+#define ACPI_JUPITER_PORT_CONNECT	BIT(0)
+/* 0 - Upstream Facing Port, 1 - Downdstream Facing Port */
+#define ACPI_JUPITER_CUR_DATA_ROLE	BIT(3)
+/*
+ * Debouncing delay to allow negotiation process to settle. 2s value
+ * was arrived at via trial and error.
+ */
+#define JUPITER_ROLE_SWITCH_DELAY	(msecs_to_jiffies(2000))
 
 struct jupiter {
 	struct acpi_device *adev;
 	struct device *hwmon;
 	void *regmap;
 	long fan_target;
+	struct delayed_work role_work;
+	struct extcon_dev *edev;
+	struct device *dev;
 };
 
 static ssize_t
@@ -106,6 +122,7 @@ JUPITER_ATTR_WO_NOARG(idle_mode_on, "WRNE");
 
 JUPITER_ATTR_RO(firmware_version, "PDFW");
 JUPITER_ATTR_RO(board_id, "BOID");
+JUPITER_ATTR_RO(pdcs, "PDCS");
 
 static umode_t
 jupiter_is_visible(struct kobject *kobj, struct attribute *attr, int index)
@@ -137,6 +154,7 @@ static struct attribute *jupiter_attributes[] = {
 
 	&dev_attr_firmware_version.attr,
 	&dev_attr_board_id.attr,
+	&dev_attr_pdcs.attr,
 
 	NULL
 };
@@ -307,12 +325,109 @@ jupiter_ddic_reg_read(void *context, unsigned int reg, unsigned int *val)
 	return 0;
 }
 
+static int jupiter_read_pdcs(struct jupiter *jup, unsigned long long *pdcs)
+{
+	acpi_status status;
+
+	status = acpi_evaluate_integer(jup->adev->handle, "PDCS", NULL, pdcs);
+	if (ACPI_FAILURE(status)) {
+		dev_err(jup->dev, "PDCS evaluation failed: %s\n",
+			acpi_format_exception(status));
+		return -EIO;
+	}
+
+	return 0;
+}
+
+static void jupiter_usb_role_work(struct work_struct *work)
+{
+	struct jupiter *jup =
+		container_of(work, struct jupiter, role_work.work);
+	unsigned long long pdcs;
+	bool usb_host;
+
+	if (jupiter_read_pdcs(jup, &pdcs))
+		return;
+
+	dev_info(jup->dev, "%s PDCS = %llx\n", __func__, pdcs);
+	/*
+	 * We only care about these two
+	 */
+	pdcs &= ACPI_JUPITER_PORT_CONNECT | ACPI_JUPITER_CUR_DATA_ROLE;
+
+	/*
+	 * For "connect" events our role is determined by a bit in
+	 * PDCS, for "disconnect" we switch to being a gadget
+	 * unconditionally. The thinking for the latter is we don't
+	 * want to start acting as a USB host until we get
+	 * confirmation from the firmware that we are a USB host
+	 */
+	usb_host = (pdcs & ACPI_JUPITER_PORT_CONNECT) ?
+		pdcs & ACPI_JUPITER_CUR_DATA_ROLE : false;
+
+	WARN_ON(extcon_set_state_sync(jup->edev, EXTCON_USB_HOST,
+				      usb_host));
+	dev_info(jup->dev, "USB role is %s\n", usb_host ? "host" : "device");
+}
+
+static void jupiter_notify(acpi_handle handle, u32 event, void *context)
+{
+	struct device *dev = context;
+	struct jupiter *jup = dev_get_drvdata(dev);
+	unsigned long long pdcs;
+	unsigned long delay;
+
+
+
+	switch (event) {
+	case ACPI_JUPITER_NOTIFY_STATUS:
+		if (jupiter_read_pdcs(jup, &pdcs))
+			return;
+		dev_info(dev, "ACPI event [0x%x], PDCS = %llx\n", event, pdcs);
+		/*
+		 * We process "disconnect" events immediately and
+		 * "connect" events with a delay to give the HW time
+		 * to settle. For example attaching USB hub (at least
+		 * for HW used for testing) will generate intermediary
+		 * event with "host" bit not set, followed by the one
+		 * that does have it set.
+		 */
+		delay = (pdcs & ACPI_JUPITER_PORT_CONNECT) ?
+			JUPITER_ROLE_SWITCH_DELAY : 0;
+
+		queue_delayed_work(system_long_wq, &jup->role_work, delay);
+		break;
+	default:
+		dev_info(dev, "Unsupported event [0x%x]\n", event);
+	}
+}
+
+static void jupiter_remove_notify_handler(void *data)
+{
+	struct jupiter *jup = data;
+
+	acpi_remove_notify_handler(jup->adev->handle, ACPI_DEVICE_NOTIFY,
+				   jupiter_notify);
+	cancel_delayed_work_sync(&jup->role_work);
+}
+
+static const unsigned int jupiter_extcon_cable[] = {
+	EXTCON_USB,
+	EXTCON_USB_HOST,
+	EXTCON_CHG_USB_SDP,
+	EXTCON_CHG_USB_CDP,
+	EXTCON_CHG_USB_DCP,
+	EXTCON_CHG_USB_ACA,
+	EXTCON_NONE,
+};
+
 static int jupiter_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct jupiter *jup;
 	acpi_status status;
 	unsigned long long sta;
+	int ret;
 
 	static const struct regmap_config regmap_config = {
 		.reg_bits = 8,
@@ -326,7 +441,9 @@ static int jupiter_probe(struct platform_device *pdev)
 	if (!jup)
 		return -ENOMEM;
 	jup->adev = ACPI_COMPANION(&pdev->dev);
+	jup->dev = dev;
 	platform_set_drvdata(pdev, jup);
+	INIT_DELAYED_WORK(&jup->role_work, jupiter_usb_role_work);
 
 	status = acpi_evaluate_integer(jup->adev->handle, "_STA",
 				       NULL, &sta);
@@ -362,7 +479,34 @@ static int jupiter_probe(struct platform_device *pdev)
 	if (IS_ERR(jup->regmap))
 		dev_err(dev, "Failed to register REGMAP");
 
-	return 0;
+	jup->edev = devm_extcon_dev_allocate(dev, jupiter_extcon_cable);
+	if (IS_ERR(jup->edev))
+		return -ENOMEM;
+
+	ret = devm_extcon_dev_register(dev, jup->edev);
+	if (ret < 0) {
+		dev_err(dev, "Failed to register extcon device: %d\n", ret);
+		return ret;
+	}
+
+	/*
+	 * Set initial role value
+	 */
+	queue_delayed_work(system_long_wq, &jup->role_work, 0);
+	flush_delayed_work(&jup->role_work);
+
+	status = acpi_install_notify_handler(jup->adev->handle,
+					     ACPI_DEVICE_NOTIFY,
+					     jupiter_notify,
+					     dev);
+	if (ACPI_FAILURE(status)) {
+		dev_err(dev, "Error installing ACPI notify handler\n");
+		return -EIO;
+	}
+
+	ret = devm_add_action_or_reset(dev, jupiter_remove_notify_handler,
+				       jup);
+	return ret;
 }
 
 static const struct acpi_device_id jupiter_device_ids[] = {
