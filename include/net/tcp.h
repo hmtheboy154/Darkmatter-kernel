@@ -122,6 +122,7 @@ void tcp_time_wait(struct sock *sk, int state, int timeo);
 
 #define TCP_TIMEWAIT_LEN (60*HZ) /* how long to wait to destroy TIME-WAIT
 				  * state, about 60 seconds	*/
+#define TCP_TIMEWAIT_LEN_MIN (1*HZ)
 #define TCP_FIN_TIMEOUT	TCP_TIMEWAIT_LEN
                                  /* BSD style FIN_WAIT2 deadlock breaker.
 				  * It used to be 3min, new value is 60sec,
@@ -1547,6 +1548,34 @@ static inline int tcp_fin_time(const struct sock *sk)
 		fin_timeout = (rto << 2) - (rto >> 1);
 
 	return fin_timeout;
+}
+
+static inline int tcp_timewait_len(const struct inet_timewait_sock *tw)
+{
+	bool loopback = false;
+
+	if (tw->tw_bound_dev_if == LOOPBACK_IFINDEX)
+		loopback = true;
+#if IS_ENABLED(CONFIG_IPV6)
+	else if (tw->tw_family == AF_INET6) {
+		if (ipv6_addr_loopback(&tw->tw_v6_daddr) ||
+			ipv6_addr_v4mapped_loopback(&tw->tw_v6_daddr) ||
+			ipv6_addr_loopback(&tw->tw_v6_rcv_saddr) ||
+			ipv6_addr_v4mapped_loopback(&tw->tw_v6_rcv_saddr))
+			loopback = true;
+	}
+#endif
+	else
+	{
+		if (ipv4_is_loopback(tw->tw_daddr) ||
+			ipv4_is_loopback(tw->tw_rcv_saddr))
+			loopback = true;
+	}
+
+	if (!loopback)
+		return TCP_TIMEWAIT_LEN;
+
+	return max(TCP_TIMEWAIT_LEN_MIN, sock_net((const struct sock*)tw)->ipv4.sysctl_tcp_fin_timeout);
 }
 
 static inline bool tcp_paws_check(const struct tcp_options_received *rx_opt,
