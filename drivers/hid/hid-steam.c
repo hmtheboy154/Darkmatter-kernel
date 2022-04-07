@@ -98,6 +98,8 @@ static LIST_HEAD(steam_devices);
 #define STEAM_REG_RPAD_MARGIN		0x18
 #define STEAM_REG_LED			0x2d
 #define STEAM_REG_GYRO_MODE		0x30
+#define STEAM_REG_LPAD_CLICK_PRESSURE	0x34
+#define STEAM_REG_RPAD_CLICK_PRESSURE	0x35
 
 /* Raw event identifiers */
 #define STEAM_EV_INPUT_DATA		0x01
@@ -131,6 +133,7 @@ struct steam_device {
 	struct power_supply __rcu *battery;
 	u8 battery_charge;
 	u16 voltage;
+	struct delayed_work heartbeat;
 };
 
 static int steam_recv_report(struct steam_device *steam,
@@ -200,7 +203,7 @@ static int steam_send_report(struct steam_device *steam,
 	 */
 	do {
 		ret = hid_hw_raw_request(steam->hdev, 0,
-				buf, size + 1,
+				buf, max(size, 64) + 1,
 				HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
 		if (ret != -EPIPE)
 			break;
@@ -226,6 +229,7 @@ static int steam_write_registers(struct steam_device *steam,
 	u8 reg;
 	u16 val;
 	u8 cmd[64] = {STEAM_CMD_WRITE_REGISTER, 0x00};
+	int ret;
 	va_list args;
 
 	va_start(args, steam);
@@ -241,7 +245,16 @@ static int steam_write_registers(struct steam_device *steam,
 	}
 	va_end(args);
 
-	return steam_send_report(steam, cmd, 2 + cmd[1]);
+	ret = steam_send_report(steam, cmd, 2 + cmd[1]);
+	if (ret < 0)
+		return ret;
+
+	/*
+	 * Sometimes a lingering report for this command can
+	 * get read back instead of the last set report if
+	 * this isn't explicitly queried
+	 */
+	return steam_recv_report(steam, cmd, 2 + cmd[1]);
 }
 
 static int steam_get_serial(struct steam_device *steam)
@@ -287,13 +300,32 @@ static void steam_set_lizard_mode(struct steam_device *steam, bool enable)
 		steam_write_registers(steam,
 			STEAM_REG_RPAD_MARGIN, 0x01, /* enable margin */
 			0);
+
+		cancel_delayed_work_sync(&steam->heartbeat);
 	} else {
 		/* disable esc, enter, cursor */
 		steam_send_report_byte(steam, STEAM_CMD_CLEAR_MAPPINGS);
-		steam_write_registers(steam,
-			STEAM_REG_RPAD_MODE, 0x07, /* disable mouse */
-			STEAM_REG_RPAD_MARGIN, 0x00, /* disable margin */
-			0);
+
+		if (steam->quirks & STEAM_QUIRK_DECK) {
+			steam_write_registers(steam,
+				STEAM_REG_RPAD_MARGIN, 0x00, /* disable margin */
+				STEAM_REG_LPAD_MODE, 0x07, /* disable mouse */
+				STEAM_REG_RPAD_MODE, 0x07, /* disable mouse */
+				STEAM_REG_LPAD_CLICK_PRESSURE, 0xFFFF, /* disable clicky pad */
+				STEAM_REG_RPAD_CLICK_PRESSURE, 0xFFFF, /* disable clicky pad */
+				0);
+			/*
+			 * The Steam Deck has a watchdog that automatically enables
+			 * lizard mode if it doesn't see any traffic for too long
+			 */
+			schedule_delayed_work(&steam->heartbeat, 5 * HZ);
+		} else {
+			steam_write_registers(steam,
+				STEAM_REG_RPAD_MARGIN, 0x00, /* disable margin */
+				STEAM_REG_LPAD_MODE, 0x07, /* disable mouse */
+				STEAM_REG_RPAD_MODE, 0x07, /* disable mouse */
+				0);
+		}
 	}
 }
 
@@ -655,6 +687,24 @@ static bool steam_is_valve_interface(struct hid_device *hdev)
 	return !list_empty(&rep_enum->report_list);
 }
 
+static void steam_lizard_mode_heartbeat(struct work_struct *work)
+{
+	struct steam_device *steam = container_of(work, struct steam_device,
+							heartbeat.work);
+	if (lizard_mode)
+		return;
+
+	mutex_lock(&steam->mutex);
+	if (!steam->client_opened) {
+		steam_send_report_byte(steam, STEAM_CMD_CLEAR_MAPPINGS);
+		steam_write_registers(steam,
+			STEAM_REG_RPAD_MODE, 0x07, /* disable mouse */
+			0);
+		schedule_delayed_work(&steam->heartbeat, 5 * HZ);
+	}
+	mutex_unlock(&steam->mutex);
+}
+
 static int steam_client_ll_parse(struct hid_device *hdev)
 {
 	struct steam_device *steam = hdev->driver_data;
@@ -793,6 +843,7 @@ static int steam_probe(struct hid_device *hdev,
 	steam->quirks = id->driver_data;
 	INIT_WORK(&steam->work_connect, steam_work_connect_cb);
 	INIT_LIST_HEAD(&steam->list);
+	INIT_DEFERRABLE_WORK(&steam->heartbeat, steam_lizard_mode_heartbeat);
 
 	steam->client_hdev = steam_create_client_hid(hdev);
 	if (IS_ERR(steam->client_hdev)) {
@@ -866,6 +917,7 @@ static void steam_remove(struct hid_device *hdev)
 	hid_destroy_device(steam->client_hdev);
 	steam->client_opened = false;
 	cancel_work_sync(&steam->work_connect);
+	cancel_delayed_work_sync(&steam->heartbeat);
 	if (steam->quirks & STEAM_QUIRK_WIRELESS) {
 		hid_info(hdev, "Steam wireless receiver disconnected");
 	}
@@ -1153,11 +1205,17 @@ static void steam_do_deck_input_event(struct steam_device *steam,
 	if (lpad_touched) {
 		input_report_abs(input, ABS_HAT0X, steam_le16(data + 16));
 		input_report_abs(input, ABS_HAT0Y, steam_le16(data + 18));
+	} else {
+		input_report_abs(input, ABS_HAT0X, 0);
+		input_report_abs(input, ABS_HAT0Y, 0);
 	}
 
 	if (rpad_touched) {
 		input_report_abs(input, ABS_HAT1X, steam_le16(data + 20));
 		input_report_abs(input, ABS_HAT1Y, steam_le16(data + 22));
+	} else {
+		input_report_abs(input, ABS_HAT1X, 0);
+		input_report_abs(input, ABS_HAT1Y, 0);
 	}
 
 	input_report_abs(input, ABS_X, steam_le16(data + 48));
