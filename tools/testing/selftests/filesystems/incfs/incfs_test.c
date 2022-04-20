@@ -4409,6 +4409,7 @@ static int sysfs_test(const char *mount_dir)
 	int fd = -1;
 	int pid = -1;
 	char buffer[32];
+	char *null_buf = NULL;
 	int status;
 	struct incfs_per_uid_read_timeouts purt_set[] = {
 		{
@@ -4437,13 +4438,13 @@ static int sysfs_test(const char *mount_dir)
 	TEST(fd = open(filename, O_RDONLY | O_CLOEXEC), fd != -1);
 	TESTEQUAL(ioctl_test_last_error(cmd_fd, NULL, 0, 0), 0);
 	TESTEQUAL(sysfs_test_value("reads_failed_timed_out", 0), 0);
-	TEST(read(fd, NULL, 1), -1);
+	TESTEQUAL(read(fd, null_buf, 1), -1);
 	TESTEQUAL(ioctl_test_last_error(cmd_fd, &file.id, 0, -ETIME), 0);
 	TESTEQUAL(sysfs_test_value("reads_failed_timed_out", 2), 0);
 
 	TESTEQUAL(emit_test_file_data(mount_dir, &file), 0);
 	TESTEQUAL(sysfs_test_value("reads_failed_hash_verification", 0), 0);
-	TESTEQUAL(read(fd, NULL, 1), -1);
+	TESTEQUAL(read(fd, null_buf, 1), -1);
 	TESTEQUAL(sysfs_test_value("reads_failed_hash_verification", 1), 0);
 	TESTSYSCALL(close(fd));
 	fd = -1;
@@ -4609,6 +4610,29 @@ out:
 	return result;
 }
 
+static int stacked_mount_test(const char *mount_dir)
+{
+	int result = TEST_FAILURE;
+	char *backing_dir = NULL;
+
+	/* Mount with no node */
+	TEST(backing_dir = create_backing_dir(mount_dir), backing_dir);
+	TESTEQUAL(mount_fs(mount_dir, backing_dir, 0), 0);
+	/* Try mounting another instance with same name */
+	TESTEQUAL(mount_fs(mount_dir, backing_dir, 0), 0);
+	/* Try unmounting the first instance */
+	TESTEQUAL(umount_fs(mount_dir), 0);
+	/* Try unmounting the second instance */
+	TESTEQUAL(umount_fs(mount_dir), 0);
+	result = TEST_SUCCESS;
+out:
+	/* Cleanup */
+	rmdir(mount_dir);
+	rmdir(backing_dir);
+	free(backing_dir);
+	return result;
+}
+
 static char *setup_mount_dir()
 {
 	struct stat st;
@@ -4730,6 +4754,7 @@ int main(int argc, char *argv[])
 		MAKE_TEST(stat_test),
 		MAKE_TEST(sysfs_test),
 		MAKE_TEST(sysfs_rename_test),
+		MAKE_TEST(stacked_mount_test),
 	};
 #undef MAKE_TEST
 

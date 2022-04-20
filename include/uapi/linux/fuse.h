@@ -527,6 +527,12 @@ struct fuse_entry_bpf_out {
 	uint64_t	bpf_fd;
 };
 
+struct fuse_entry_bpf {
+	struct fuse_entry_bpf_out out;
+	struct file *backing_file;
+	struct file *bpf_file;
+};
+
 struct fuse_forget_in {
 	uint64_t	nlookup;
 };
@@ -984,6 +990,7 @@ struct fuse_args {
 	int nocreds:1;
 	int in_pages:1;
 	int out_pages:1;
+	int user_pages:1;
 	int out_argvar:1;
 	int page_zeroing:1;
 	int page_replace:1;

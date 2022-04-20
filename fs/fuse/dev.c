@@ -956,7 +956,17 @@ static int fuse_copy_page(struct fuse_copy_state *cs, struct page **pagep,
 
 	while (count) {
 		if (cs->write && cs->pipebufs && page) {
-			return fuse_ref_page(cs, page, offset, count);
+			/*
+			 * Can't control lifetime of pipe buffers, so always
+			 * copy user pages.
+			 */
+			if (cs->req->args->user_pages) {
+				err = fuse_copy_fill(cs);
+				if (err)
+					return err;
+			} else {
+				return fuse_ref_page(cs, page, offset, count);
+			}
 		} else if (!cs->len) {
 			if (cs->move_pages && page &&
 			    offset == 0 && count == PAGE_SIZE) {
@@ -1941,6 +1951,19 @@ static ssize_t fuse_dev_do_write(struct fuse_dev *fud,
 		path[req->args->out_args[0].size - 1] = 0;
 		req->out.h.error =
 			kern_path(path, 0, req->args->canonical_path);
+	}
+
+	if (!err && (req->in.h.opcode == FUSE_LOOKUP ||
+		     req->in.h.opcode == (FUSE_LOOKUP | FUSE_POSTFILTER)) &&
+		req->args->out_args[1].size == sizeof(struct fuse_entry_bpf_out)) {
+		struct fuse_entry_bpf_out *febo = (struct fuse_entry_bpf_out *)
+				req->args->out_args[1].value;
+		struct fuse_entry_bpf *feb = container_of(febo, struct fuse_entry_bpf, out);
+
+		if (febo->backing_action == FUSE_ACTION_REPLACE)
+			feb->backing_file = fget(febo->backing_fd);
+		if (febo->bpf_action == FUSE_ACTION_REPLACE)
+			feb->bpf_file = fget(febo->bpf_fd);
 	}
 
 	spin_lock(&fpq->lock);

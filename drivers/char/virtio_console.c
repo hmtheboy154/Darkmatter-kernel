@@ -28,6 +28,7 @@
 #include "../tty/hvc/hvc_console.h"
 
 #define is_rproc_enabled IS_ENABLED(CONFIG_REMOTEPROC)
+#define VIRTCONS_MAX_PORTS 0x8000
 
 /*
  * This is a global struct for storing common data for all the devices
@@ -1959,6 +1960,13 @@ static void virtcons_remove(struct virtio_device *vdev)
 	list_del(&portdev->list);
 	spin_unlock_irq(&pdrvdata_lock);
 
+	/* Device is going away, exit any polling for buffers */
+	virtio_break_device(vdev);
+	if (use_multiport(portdev))
+		flush_work(&portdev->control_work);
+	else
+		flush_work(&portdev->config_work);
+
 	/* Disable interrupts for vqs */
 	vdev->config->reset(vdev);
 	/* Finish up work that's lined up */
@@ -2039,6 +2047,14 @@ static int virtcons_probe(struct virtio_device *vdev)
 	    virtio_cread_feature(vdev, VIRTIO_CONSOLE_F_MULTIPORT,
 				 struct virtio_console_config, max_nr_ports,
 				 &portdev->max_nr_ports) == 0) {
+		if (portdev->max_nr_ports == 0 ||
+		    portdev->max_nr_ports > VIRTCONS_MAX_PORTS) {
+			dev_err(&vdev->dev,
+				"Invalidate max_nr_ports %d",
+				portdev->max_nr_ports);
+			err = -EINVAL;
+			goto free;
+		}
 		multiport = true;
 	}
 

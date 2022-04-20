@@ -33,6 +33,9 @@
 #include <linux/pid_namespace.h>
 #include <linux/refcount.h>
 #include <linux/user_namespace.h>
+#include <linux/statfs.h>
+
+#define FUSE_SUPER_MAGIC 0x65735546
 
 /** Default max number of pages that can be used in a single read request */
 #define FUSE_DEFAULT_MAX_PAGES_PER_REQ 32
@@ -541,6 +544,7 @@ struct fuse_fs_context {
 	bool no_force_umount:1;
 	bool legacy_opts_show:1;
 	bool dax:1;
+	bool no_daemon:1;
 	unsigned int max_read;
 	unsigned int blksize;
 	const char *subtype;
@@ -789,6 +793,9 @@ struct fuse_conn {
 	/** Passthrough mode for read/write IO */
 	unsigned int passthrough:1;
 
+	/** BPF Only, no Daemon running */
+	unsigned int no_daemon:1;
+
 	/** The number of requests waiting for completion */
 	atomic_t num_waiting;
 
@@ -838,9 +845,6 @@ struct fuse_conn {
 
 	/** Protects passthrough_req */
 	spinlock_t passthrough_req_lock;
-
-	/** task_struct for fd lookups in fuse-bpf */
-	struct task_struct *task;
 };
 
 /*
@@ -946,7 +950,6 @@ struct inode *fuse_iget(struct super_block *sb, u64 nodeid,
 
 int fuse_lookup_name(struct super_block *sb, u64 nodeid, const struct qstr *name,
 		     struct fuse_entry_out *outarg,
-		     struct fuse_entry_bpf_out *bpf_outarg,
 		     struct dentry *entry, struct inode **inode);
 
 /**
@@ -1172,6 +1175,7 @@ int fuse_allow_current_process(struct fuse_conn *fc);
 
 u64 fuse_lock_owner_id(struct fuse_conn *fc, fl_owner_t id);
 
+void fuse_flush_time_update(struct inode *inode);
 void fuse_update_ctime(struct inode *inode);
 
 int fuse_update_attributes(struct inode *inode, struct file *file);
@@ -1291,6 +1295,7 @@ bool fuse_dax_check_alignment(struct fuse_conn *fc, unsigned int map_alignment);
 void fuse_dax_cancel_work(struct fuse_conn *fc);
 
 /* passthrough.c */
+void fuse_copyattr(struct file *dst_file, struct file *src_file);
 int fuse_passthrough_open(struct fuse_dev *fud, u32 lower_fd);
 int fuse_passthrough_setup(struct fuse_conn *fc, struct fuse_file *ff,
 			   struct fuse_open_out *openarg);
@@ -1301,8 +1306,7 @@ ssize_t fuse_passthrough_mmap(struct file *file, struct vm_area_struct *vma);
 
 /* backing.c */
 
-struct file *fuse_fget(struct fuse_conn *fc, unsigned int fd);
-struct bpf_prog *fuse_get_bpf_prog(struct fuse_conn *fc, unsigned int fd);
+struct bpf_prog *fuse_get_bpf_prog(struct file *file);
 
 /*
  * Dummy io passed to fuse_bpf_backing when io operation needs no scratch space
@@ -1429,6 +1433,35 @@ int fuse_flush_backing(struct fuse_args *fa, struct file *file, fl_owner_t id);
 void *fuse_flush_finalize(struct fuse_args *fa,
 			  struct file *file, fl_owner_t id);
 
+struct fuse_lseek_io {
+	struct fuse_lseek_in fli;
+	struct fuse_lseek_out flo;
+};
+
+int fuse_lseek_initialize(struct fuse_args *fa, struct fuse_lseek_io *fli,
+			  struct file *file, loff_t offset, int whence);
+int fuse_lseek_backing(struct fuse_args *fa, struct file *file, loff_t offset, int whence);
+void *fuse_lseek_finalize(struct fuse_args *fa, struct file *file, loff_t offset, int whence);
+
+struct fuse_copy_file_range_io {
+	struct fuse_copy_file_range_in fci;
+	struct fuse_write_out fwo;
+};
+
+int fuse_copy_file_range_initialize(struct fuse_args *fa,
+				   struct fuse_copy_file_range_io *fcf,
+				   struct file *file_in, loff_t pos_in,
+				   struct file *file_out, loff_t pos_out,
+				   size_t len, unsigned int flags);
+int fuse_copy_file_range_backing(struct fuse_args *fa,
+				 struct file *file_in, loff_t pos_in,
+				 struct file *file_out, loff_t pos_out,
+				 size_t len, unsigned int flags);
+void *fuse_copy_file_range_finalize(struct fuse_args *fa,
+				    struct file *file_in, loff_t pos_in,
+				    struct file *file_out, loff_t pos_out,
+				    size_t len, unsigned int flags);
+
 int fuse_fsync_initialize(struct fuse_args *fa, struct fuse_fsync_in *ffi,
 		   struct file *file, loff_t start, loff_t end, int datasync);
 int fuse_fsync_backing(struct fuse_args *fa,
@@ -1475,6 +1508,14 @@ void *fuse_setxattr_finalize(struct fuse_args *fa, struct dentry *dentry,
 			     const char *name, const void *value, size_t size,
 			     int flags);
 
+int fuse_removexattr_initialize(struct fuse_args *fa,
+				struct fuse_dummy_io *unused,
+				struct dentry *dentry, const char *name);
+int fuse_removexattr_backing(struct fuse_args *fa,
+			     struct dentry *dentry, const char *name);
+void *fuse_removexattr_finalize(struct fuse_args *fa,
+				struct dentry *dentry, const char *name);
+
 int fuse_file_read_iter_initialize(
 		struct fuse_args *fa, struct fuse_read_in *fri,
 		struct kiocb *iocb, struct iov_iter *to);
@@ -1483,9 +1524,13 @@ int fuse_file_read_iter_backing(struct fuse_args *fa,
 void *fuse_file_read_iter_finalize(struct fuse_args *fa,
 		struct kiocb *iocb, struct iov_iter *to);
 
+struct fuse_write_iter_out {
+	uint64_t ret;
+};
 struct fuse_file_write_iter_io {
 	struct fuse_write_in fwi;
 	struct fuse_write_out fwo;
+	struct fuse_write_iter_out fwio;
 };
 
 int fuse_file_write_iter_initialize(
@@ -1508,7 +1553,7 @@ void *fuse_file_fallocate_finalize(struct fuse_args *fa,
 
 struct fuse_lookup_io {
 	struct fuse_entry_out feo;
-	struct fuse_entry_bpf_out febo;
+	struct fuse_entry_bpf feb;
 };
 
 int fuse_lookup_initialize(struct fuse_args *fa, struct fuse_lookup_io *feo,
@@ -1521,6 +1566,16 @@ int fuse_revalidate_backing(struct fuse_args *fa, struct inode *dir,
 			   struct dentry *entry, unsigned int flags);
 void *fuse_revalidate_finalize(struct fuse_args *fa, struct inode *dir,
 			   struct dentry *entry, unsigned int flags);
+
+int fuse_canonical_path_initialize(struct fuse_args *fa,
+				   struct fuse_dummy_io *fdi,
+				   const struct path *path,
+				   struct path *canonical_path);
+int fuse_canonical_path_backing(struct fuse_args *fa, const struct path *path,
+				struct path *canonical_path);
+void *fuse_canonical_path_finalize(struct fuse_args *fa,
+				   const struct path *path,
+				   struct path *canonical_path);
 
 struct fuse_getattr_io {
 	struct fuse_getattr_in fgi;
@@ -1547,6 +1602,13 @@ int fuse_setattr_backing(struct fuse_args *fa,
 		struct dentry *dentry, struct iattr *attr, struct file *file);
 void *fuse_setattr_finalize(struct fuse_args *fa,
 		struct dentry *dentry, struct iattr *attr, struct file *file);
+
+int fuse_statfs_initialize(struct fuse_args *fa, struct fuse_statfs_out *fso,
+		struct dentry *dentry, struct kstatfs *buf);
+int fuse_statfs_backing(struct fuse_args *fa,
+		struct dentry *dentry, struct kstatfs *buf);
+void *fuse_statfs_finalize(struct fuse_args *fa,
+		struct dentry *dentry, struct kstatfs *buf);
 
 int fuse_get_link_initialize(struct fuse_args *fa, struct fuse_dummy_io *dummy,
 		struct inode *inode, struct dentry *dentry,
@@ -1689,6 +1751,33 @@ static inline int finalize_attr(struct inode *inode, struct fuse_attr_out *outar
 	return err;
 }
 
+static inline void convert_statfs_to_fuse(struct fuse_kstatfs *attr, struct kstatfs *stbuf)
+{
+	attr->bsize   = stbuf->f_bsize;
+	attr->frsize  = stbuf->f_frsize;
+	attr->blocks  = stbuf->f_blocks;
+	attr->bfree   = stbuf->f_bfree;
+	attr->bavail  = stbuf->f_bavail;
+	attr->files   = stbuf->f_files;
+	attr->ffree   = stbuf->f_ffree;
+	attr->namelen = stbuf->f_namelen;
+	/* fsid is left zero */
+}
+
+static inline void convert_fuse_statfs(struct kstatfs *stbuf, struct fuse_kstatfs *attr)
+{
+	stbuf->f_type    = FUSE_SUPER_MAGIC;
+	stbuf->f_bsize   = attr->bsize;
+	stbuf->f_frsize  = attr->frsize;
+	stbuf->f_blocks  = attr->blocks;
+	stbuf->f_bfree   = attr->bfree;
+	stbuf->f_bavail  = attr->bavail;
+	stbuf->f_files   = attr->files;
+	stbuf->f_ffree   = attr->ffree;
+	stbuf->f_namelen = attr->namelen;
+	/* fsid is left zero */
+}
+
 #ifdef CONFIG_FUSE_BPF
 struct fuse_err_ret {
 	void *result;
@@ -1789,12 +1878,12 @@ struct fuse_err_ret {
 			ERR_PTR(backing(&fa, args)),			\
 			true,						\
 		};							\
+		if (IS_ERR(fer.result))					\
+			fa.error_in = PTR_ERR(fer.result);		\
 		if (!(ext_flags & FUSE_BPF_POST_FILTER))		\
 			break;						\
 									\
 		fa.opcode |= FUSE_POSTFILTER;				\
-		if (IS_ERR(fer.result))					\
-			fa.error_in = PTR_ERR(fer.result);		\
 		for (i = 0; i < fa.out_numargs; ++i)			\
 			fa.in_args[fa.in_numargs++] =			\
 				(struct fuse_in_arg) {			\

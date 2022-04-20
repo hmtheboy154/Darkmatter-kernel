@@ -24,6 +24,7 @@
 #define REG_NS_INTERRUPT_ENABLE_PER_VID_SET	0x20
 #define REG_NS_INTERRUPT_CLEAR			0x2c
 #define REG_NS_VERSION				0x60
+#define REG_NS_STATUS				0x68
 #define REG_NS_NUM_CONTEXT			0x100
 #define REG_NS_CONTEXT_CFG_VALID_VID		0x104
 #define REG_NS_ALL_INVALIDATION			0x1000
@@ -66,6 +67,9 @@
 #define VERSION_CHECK_MASK			(VERSION_MAJOR_ARCH_VER_MASK | \
 						 VERSION_MINOR_ARCH_VER_MASK | \
 						 VERSION_REV_ARCH_VER_MASK)
+
+#define STATUS_BUSY				BIT(0)
+#define STATUS_ON_INVALIDATING			BIT(1)
 
 #define NUM_CONTEXT_MASK			GENMASK(3, 0)
 
@@ -119,8 +123,9 @@ static_assert(SMPT_GRAN <= PAGE_SIZE);
 #define SMPT_ELEMS_PER_WORD			(SMPT_WORD_SIZE * SMPT_ELEMS_PER_BYTE)
 #define SMPT_WORD_BYTE_RANGE			(SMPT_GRAN * SMPT_ELEMS_PER_WORD)
 #define SMPT_NUM_ELEMS				(SZ_1G / SMPT_GRAN)
-#define SMPT_NUM_WORDS				(SMPT_SIZE / SMPT_WORD_SIZE)
 #define SMPT_SIZE				(SMPT_NUM_ELEMS / SMPT_ELEMS_PER_BYTE)
+#define SMPT_NUM_WORDS				(SMPT_SIZE / SMPT_WORD_SIZE)
+#define SMPT_NUM_PAGES				(SMPT_SIZE / PAGE_SIZE)
 #define SMPT_ORDER				get_order(SMPT_SIZE)
 
 /*
@@ -140,21 +145,6 @@ enum s2mpu_version {
 	S2MPU_VERSION_9 = 0x20000000,
 };
 
-enum s2mpu_power_state {
-	S2MPU_POWER_ALWAYS_ON = 0,
-	S2MPU_POWER_ON,
-	S2MPU_POWER_OFF,
-};
-
-struct s2mpu {
-	phys_addr_t pa;
-	void __iomem *va;
-	u32 version;
-	enum s2mpu_power_state power_state;
-	u32 power_domain_id;
-	u32 context_cfg_valid_vid;
-};
-
 enum mpt_prot {
 	MPT_PROT_NONE	= 0,
 	MPT_PROT_R	= BIT(0),
@@ -170,29 +160,21 @@ static const u64 mpt_prot_doubleword[] = {
 	[MPT_PROT_RW]   = 0xffffffffffffffff,
 };
 
-struct fmpt {
-	u32 *smpt;
-	bool gran_1g;
-	enum mpt_prot prot;
-};
-
-struct mpt {
-	struct fmpt fmpt[NR_GIGABYTES];
-};
-
 enum mpt_update_flags {
 	MPT_UPDATE_L1 = BIT(0),
 	MPT_UPDATE_L2 = BIT(1),
 };
 
-extern size_t kvm_nvhe_sym(kvm_hyp_nr_s2mpus);
-#define kvm_hyp_nr_s2mpus kvm_nvhe_sym(kvm_hyp_nr_s2mpus)
+struct fmpt {
+	u32 *smpt;
+	bool gran_1g;
+	enum mpt_prot prot;
+	enum mpt_update_flags flags;
+};
 
-extern struct s2mpu *kvm_nvhe_sym(kvm_hyp_s2mpus);
-#define kvm_hyp_s2mpus kvm_nvhe_sym(kvm_hyp_s2mpus)
-
-extern struct mpt kvm_nvhe_sym(kvm_hyp_host_mpt);
-#define kvm_hyp_host_mpt kvm_nvhe_sym(kvm_hyp_host_mpt)
+struct mpt {
+	struct fmpt fmpt[NR_GIGABYTES];
+};
 
 /* Set protection bits of SMPT in a given range without using memset. */
 static inline void __set_smpt_range_slow(u32 *smpt, size_t start_gb_byte,
@@ -268,29 +250,33 @@ static inline bool __is_smpt_uniform(u32 *smpt, enum mpt_prot prot)
 	return true;
 }
 
-/**
+/*
  * Set protection bits of FMPT/SMPT in a given range.
  * Returns flags specifying whether L1/L2 changes need to be made visible
  * to the device.
  */
-static inline enum mpt_update_flags
-__set_fmpt_range(struct fmpt *fmpt, size_t start_gb_byte, size_t end_gb_byte,
-		 enum mpt_prot prot)
+static inline void __set_fmpt_range(struct fmpt *fmpt, size_t start_gb_byte,
+				    size_t end_gb_byte, enum mpt_prot prot)
 {
 	if (start_gb_byte == 0 && end_gb_byte >= SZ_1G) {
 		/* Update covers the entire GB region. */
-		if (fmpt->gran_1g && fmpt->prot == prot)
-			return 0;
+		if (fmpt->gran_1g && fmpt->prot == prot) {
+			fmpt->flags = 0;
+			return;
+		}
 
 		fmpt->gran_1g = true;
 		fmpt->prot = prot;
-		return MPT_UPDATE_L1;
+		fmpt->flags = MPT_UPDATE_L1;
+		return;
 	}
 
 	if (fmpt->gran_1g) {
 		/* GB region currently uses 1G mapping. */
-		if (fmpt->prot == prot)
-			return 0;
+		if (fmpt->prot == prot) {
+			fmpt->flags = 0;
+			return;
+		}
 
 		/*
 		 * Range has different mapping than the rest of the GB.
@@ -300,19 +286,22 @@ __set_fmpt_range(struct fmpt *fmpt, size_t start_gb_byte, size_t end_gb_byte,
 		__set_smpt_range(fmpt->smpt, 0, start_gb_byte, fmpt->prot);
 		__set_smpt_range(fmpt->smpt, start_gb_byte, end_gb_byte, prot);
 		__set_smpt_range(fmpt->smpt, end_gb_byte, SZ_1G, fmpt->prot);
-		return MPT_UPDATE_L1 | MPT_UPDATE_L2;
+		fmpt->flags = MPT_UPDATE_L1 | MPT_UPDATE_L2;
+		return;
 	}
 
 	/* GB region currently uses PAGE_SIZE mapping. */
 	__set_smpt_range(fmpt->smpt, start_gb_byte, end_gb_byte, prot);
 
 	/* Check if the entire GB region has the same prot bits. */
-	if (!__is_smpt_uniform(fmpt->smpt, prot))
-		return MPT_UPDATE_L2;
+	if (!__is_smpt_uniform(fmpt->smpt, prot)) {
+		fmpt->flags = MPT_UPDATE_L2;
+		return;
+	}
 
 	fmpt->gran_1g = true;
 	fmpt->prot = prot;
-	return MPT_UPDATE_L1;
+	fmpt->flags = MPT_UPDATE_L1;
 }
 
 #endif /* __ARM64_KVM_S2MPU_H__ */

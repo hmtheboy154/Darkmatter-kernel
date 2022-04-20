@@ -12,10 +12,13 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/mount.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 
+#include <linux/capability.h>
 #include <linux/random.h>
 
 #include <include/uapi/linux/fuse.h>
@@ -171,6 +174,9 @@ static int basic_test(const char *mount_dir)
 			.fh = 1,
 			.open_flags = open_in->flags,
 		}));
+
+		TESTFUSEINNULL(FUSE_CANONICAL_PATH);
+		TESTFUSEOUTREAD("ignored", 7);
 
 		TESTFUSEIN(FUSE_READ, read_in);
 		TESTFUSEOUTREAD(test_data, strlen(test_data));
@@ -518,12 +524,14 @@ static int bpf_test_redact_readdir(const char *mount_dir)
 				bool is_dot;
 
 				fuse_dirent_in = (struct fuse_dirent *) dirs_in;
-				is_dot = !strcmp(fuse_dirent_in->name, ".") ||
-					 !strcmp(fuse_dirent_in->name, "..");
+				is_dot = (fuse_dirent_in->namelen == 1 &&
+						!strncmp(fuse_dirent_in->name, ".", 1)) ||
+					 (fuse_dirent_in->namelen == 2 &&
+						!strncmp(fuse_dirent_in->name, "..", 2));
 
 				dir_ent_len = FUSE_DIRENT_ALIGN(
 					sizeof(*fuse_dirent_in) +
-					fuse_dirent_in->namelen + 1);
+					fuse_dirent_in->namelen);
 
 				if (dirs_in + dir_ent_len < bytes_in + res)
 					next = (struct fuse_dirent *)
@@ -532,7 +540,7 @@ static int bpf_test_redact_readdir(const char *mount_dir)
 				if (!skip || is_dot) {
 					memcpy(dirs_out, fuse_dirent_in,
 					       sizeof(struct fuse_dirent) +
-					       fuse_dirent_in->namelen + 1);
+					       fuse_dirent_in->namelen);
 					length_out += dir_ent_len;
 				}
 				again = ((skip && !is_dot) && next);
@@ -623,6 +631,9 @@ static int bpf_test_creat(const char *mount_dir)
 			.fh = 1,
 			.open_flags = create_in->flags,
 			}));
+
+		TESTFUSEINNULL(FUSE_CANONICAL_PATH);
+		TESTFUSEOUTREAD("ignored", 7);
 
 		TESTFUSEIN(FUSE_FLUSH, flush_in);
 		TESTFUSEOUTEMPTY();
@@ -1067,6 +1078,14 @@ static int bpf_test_xattr(const char *mount_dir)
 	TESTEQUAL(xattr_size, xattr_size_ret);
 	TESTEQUAL(strcmp(xattr_value, xattr_value_ret), 0);
 
+	TESTSYSCALL(s_removexattr(s_path(s(mount_dir), s(file_name)), xattr_name));
+	TESTEQUAL(bpf_test_trace("removexattr"), 0);
+
+	TESTEQUAL(s_getxattr(s_path(s(mount_dir), s(file_name)), xattr_name,
+			       xattr_value_ret, sizeof(xattr_value_ret),
+			       &xattr_size_ret), -1);
+	TESTEQUAL(errno, ENODATA);
+
 	TESTSYSCALL(s_unlink(s_path(s(mount_dir), s(file_name))));
 	TESTEQUAL(bpf_test_trace("unlink"), 0);
 	TESTEQUAL(s_stat(s_path(s(ft_src), s(file_name)), &st), -1);
@@ -1126,6 +1145,7 @@ static int bpf_test_set_backing(const char *mount_dir)
 			}));
 		read(fuse_dev, bytes_in, sizeof(bytes_in));
 		TESTSYSCALL(close(bpf_fd));
+		TESTSYSCALL(close(backing_fd));
 	FUSE_DONE
 
 	result = TEST_SUCCESS;
@@ -1215,8 +1235,7 @@ static int bpf_test_remove_backing(const char *mount_dir)
 
 		while (read(fuse_dev, bytes_in, sizeof(bytes_in)) != -1)
 			;
-		TESTEQUAL(close(backing_fd), -1);
-		TESTEQUAL(errno, EBADF);
+		TESTSYSCALL(close(backing_fd));
 	FUSE_DONE
 
 	result = TEST_SUCCESS;
@@ -1324,6 +1343,155 @@ out:
 	return result;
 }
 
+static int readdir_perms_test(const char *mount_dir)
+{
+	int result = TEST_FAILURE;
+	struct __user_cap_header_struct uchs = { _LINUX_CAPABILITY_VERSION_3 };
+	struct __user_cap_data_struct ucds[2];
+	int src_fd = -1;
+	int fuse_dev = -1;
+	DIR *dir = NULL;
+
+	/* Must remove capabilities for this test. */
+	TESTSYSCALL(syscall(SYS_capget, &uchs, ucds));
+	ucds[0].effective &= ~(1 << CAP_DAC_OVERRIDE | 1 << CAP_DAC_READ_SEARCH);
+	TESTSYSCALL(syscall(SYS_capset, &uchs, ucds));
+
+	/* This is what we are testing in fuseland. First test without fuse, */
+	TESTSYSCALL(mkdir("test", 0111));
+	TEST(dir = opendir("test"), dir == NULL);
+	closedir(dir);
+	dir = NULL;
+
+	TEST(src_fd = open(ft_src, O_DIRECTORY | O_RDONLY | O_CLOEXEC),
+	     src_fd != -1);
+	TESTEQUAL(mount_fuse(mount_dir, -1, src_fd, &fuse_dev), 0);
+
+	TESTSYSCALL(s_mkdir(s_path(s(mount_dir), s("test")), 0111));
+	TEST(dir = s_opendir(s_path(s(mount_dir), s("test"))), dir == NULL);
+
+	result = TEST_SUCCESS;
+out:
+	ucds[0].effective |= 1 << CAP_DAC_OVERRIDE | 1 << CAP_DAC_READ_SEARCH;
+	syscall(SYS_capset, &uchs, ucds);
+
+	closedir(dir);
+	s_rmdir(s_path(s(mount_dir), s("test")));
+	umount(mount_dir);
+	close(fuse_dev);
+	close(src_fd);
+	rmdir("test");
+	return result;
+}
+
+static int inotify_test(const char *mount_dir)
+{
+	int result = TEST_FAILURE;
+	int src_fd = -1;
+	int fuse_dev = -1;
+	struct s dir;
+	int inotify_fd = -1;
+	int watch;
+	int fd = -1;
+	char buffer[sizeof(struct inotify_event) + NAME_MAX + 1];
+
+	TEST(src_fd = open(ft_src, O_DIRECTORY | O_RDONLY | O_CLOEXEC),
+	     src_fd != -1);
+	TESTEQUAL(mount_fuse(mount_dir, -1, src_fd, &fuse_dev), 0);
+
+	TEST(inotify_fd = inotify_init1(IN_CLOEXEC), inotify_fd != -1);
+	dir = s_path(s(mount_dir), s("dir"));
+	TESTSYSCALL(mkdir(dir.s, 0777));
+	TEST(watch = inotify_add_watch(inotify_fd, dir.s, IN_CREATE), watch);
+	TEST(fd = s_creat(s_path(s(ft_src), s("dir/file")), 0777), fd != -1);
+	// buffer will be two struct lengths, as "file" gets rounded up to the
+	// next multiple of struct inotify_event
+	TESTEQUAL(read(inotify_fd, &buffer, sizeof(buffer)),
+		  sizeof(struct inotify_event) * 2);
+
+	result = TEST_SUCCESS;
+out:
+	close(fd);
+	s_unlink(s_path(s(ft_src), s("dir/file")));
+	close(inotify_fd);
+	rmdir(dir.s);
+	free(dir.s);
+	umount(mount_dir);
+	close(fuse_dev);
+	close(src_fd);
+	return result;
+}
+
+static int bpf_test_statfs(const char *mount_dir)
+{
+	int result = TEST_FAILURE;
+	int src_fd = -1;
+	int bpf_fd = -1;
+	int fuse_dev = -1;
+	int fd = -1;
+	struct statfs st;
+
+	TEST(src_fd = open(ft_src, O_DIRECTORY | O_RDONLY | O_CLOEXEC),
+	     src_fd != -1);
+	TESTEQUAL(install_elf_bpf("test_bpf.bpf", "test_trace",
+				  &bpf_fd, NULL, NULL), 0);
+	TESTEQUAL(mount_fuse(mount_dir, bpf_fd, src_fd, &fuse_dev), 0);
+
+	TESTSYSCALL(s_statfs(s(mount_dir), &st));
+	TESTEQUAL(bpf_test_trace("statfs"), 0);
+	TESTEQUAL(st.f_type, 0x65735546);
+	result = TEST_SUCCESS;
+out:
+	close(fd);
+	umount(mount_dir);
+	close(fuse_dev);
+	close(bpf_fd);
+	close(src_fd);
+	return result;
+}
+
+static int bpf_test_lseek(const char *mount_dir)
+{
+	const char *file = "real";
+	const char *test_data = "data";
+	int result = TEST_FAILURE;
+	int src_fd = -1;
+	int bpf_fd = -1;
+	int fuse_dev = -1;
+	int fd = -1;
+
+	TEST(src_fd = open(ft_src, O_DIRECTORY | O_RDONLY | O_CLOEXEC),
+	     src_fd != -1);
+	TEST(fd = openat(src_fd, file, O_CREAT | O_RDWR | O_CLOEXEC, 0777),
+	     fd != -1);
+	TESTEQUAL(write(fd, test_data, strlen(test_data)), strlen(test_data));
+	TESTSYSCALL(close(fd));
+	fd = -1;
+	TESTEQUAL(install_elf_bpf("test_bpf.bpf", "test_trace",
+				  &bpf_fd, NULL, NULL), 0);
+	TESTEQUAL(mount_fuse(mount_dir, bpf_fd, src_fd, &fuse_dev), 0);
+
+	TEST(fd = s_open(s_path(s(mount_dir), s(file)), O_RDONLY | O_CLOEXEC),
+	     fd != -1);
+	TESTEQUAL(lseek(fd, 3, SEEK_SET), 3);
+	TESTEQUAL(bpf_test_trace("lseek"), 0);
+	TESTEQUAL(lseek(fd, 5, SEEK_END), 9);
+	TESTEQUAL(bpf_test_trace("lseek"), 0);
+	TESTEQUAL(lseek(fd, 1, SEEK_CUR), 10);
+	TESTEQUAL(bpf_test_trace("lseek"), 0);
+	TESTEQUAL(lseek(fd, 1, SEEK_DATA), 1);
+	TESTEQUAL(bpf_test_trace("lseek"), 0);
+	result = TEST_SUCCESS;
+out:
+	close(fd);
+	umount(mount_dir);
+	close(fuse_dev);
+	close(bpf_fd);
+	close(src_fd);
+	return result;
+}
+
+
 static int parse_options(int argc, char *const *argv)
 {
 	signed char c;
@@ -1424,6 +1592,10 @@ int main(int argc, char *argv[])
 		MAKE_TEST(bpf_test_alter_errcode_bpf),
 		MAKE_TEST(bpf_test_alter_errcode_userspace),
 		MAKE_TEST(mmap_test),
+		MAKE_TEST(readdir_perms_test),
+		MAKE_TEST(inotify_test),
+		MAKE_TEST(bpf_test_statfs),
+		MAKE_TEST(bpf_test_lseek),
 	};
 #undef MAKE_TEST
 

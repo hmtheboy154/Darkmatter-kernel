@@ -11,7 +11,7 @@ obj-$(CONFIG_KVM) += kvm.o
 obj-$(CONFIG_KVM) += hyp/ iommu/
 
 kvm-y := $(KVM)/kvm_main.o $(KVM)/coalesced_mmio.o $(KVM)/eventfd.o \
-	 $(KVM)/vfio.o $(KVM)/irqchip.o \
+	 $(KVM)/vfio.o $(KVM)/irqchip.o iommu.o \
 	 arm.o mmu.o mmio.o psci.o perf.o hypercalls.o pvtime.o \
 	 inject_fault.o va_layout.o handle_exit.o \
 	 guest.o debug.o reset.o sys_regs.o \
@@ -32,7 +32,7 @@ define rule_gen_hyp_constants
 	$(call filechk,offsets,__HYP_CONSTANTS_H__)
 endef
 
-CFLAGS_hyp-constants.o = -I $(srctree)/$(src)/hyp/include
+CFLAGS_hyp-constants.o = -I $(srctree)/$(src)/hyp/include -D__KVM_NVHE_HYPERVISOR__=1
 $(obj)/hyp-constants.s: $(src)/hyp/hyp-constants.c FORCE
 	$(call if_changed_dep,cc_s_c)
 

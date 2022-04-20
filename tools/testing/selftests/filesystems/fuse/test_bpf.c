@@ -98,6 +98,11 @@ int trace_test(struct fuse_args *fa)
 		return 0;
 	}
 
+	case FUSE_ACCESS | FUSE_PREFILTER: {
+		bpf_printk("Access: %d", fa->nodeid);
+		return FUSE_BPF_BACKING;
+	}
+
 	case FUSE_CREATE | FUSE_PREFILTER:
 		bpf_printk("Create: %d", fa->nodeid);
 		return FUSE_BPF_BACKING;
@@ -324,6 +329,30 @@ int trace_test(struct fuse_args *fa)
 		return FUSE_BPF_BACKING;
 	}
 
+	case FUSE_REMOVEXATTR | FUSE_PREFILTER: {
+		const char *name = fa->in_args[0].value;
+
+		bpf_printk("removexattr %s", name);
+		return FUSE_BPF_BACKING;
+	}
+
+	case FUSE_CANONICAL_PATH | FUSE_PREFILTER: {
+		bpf_printk("canonical_path");
+		return FUSE_BPF_BACKING;
+	}
+
+	case FUSE_STATFS | FUSE_PREFILTER: {
+		bpf_printk("statfs");
+		return FUSE_BPF_BACKING;
+	}
+
+	case FUSE_LSEEK | FUSE_PREFILTER: {
+		const struct fuse_lseek_in *fli = fa->in_args[0].value;
+
+		bpf_printk("lseek type:%d, offset:%lld", fli->whence, fli->offset);
+		return FUSE_BPF_BACKING;
+	}
+
 	default:
 		bpf_printk("Unknown opcode %d", fa->opcode);
 		return 0;
@@ -344,6 +373,11 @@ int trace_hidden(struct fuse_args *fa)
 		if (!strcmp(name, "hide"))
 			return -ENOENT;
 
+		return FUSE_BPF_BACKING;
+	}
+
+	case FUSE_ACCESS | FUSE_PREFILTER: {
+		bpf_printk("Access: %d", fa->nodeid);
 		return FUSE_BPF_BACKING;
 	}
 
@@ -374,6 +408,9 @@ int trace_hidden(struct fuse_args *fa)
 	//	bpf_printk("fallocate %d", fa->nodeid);
 		return FUSE_BPF_BACKING;
 
+	case FUSE_CANONICAL_PATH | FUSE_PREFILTER: {
+		return FUSE_BPF_BACKING;
+	}
 	default:
 		bpf_printk("Unknown opcode: %d", fa->opcode);
 		return 0;

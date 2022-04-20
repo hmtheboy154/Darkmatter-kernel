@@ -12,6 +12,7 @@
 
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/statfs.h>
 #include <sys/types.h>
 
 #define PAGE_SIZE 4096
@@ -50,12 +51,14 @@ int s_openat(int dirfd, struct s pathname, int flags, ...);
 int s_creat(struct s pathname, mode_t mode);
 int s_mkfifo(struct s pathname, mode_t mode);
 int s_stat(struct s pathname, struct stat *st);
+int s_statfs(struct s pathname, struct statfs *st);
 DIR *s_opendir(struct s pathname);
 int s_getxattr(struct s pathname, const char name[], void *value, size_t size,
 	       ssize_t *ret_size);
 int s_listxattr(struct s pathname, void *list, size_t size, ssize_t *ret_size);
 int s_setxattr(struct s pathname, const char name[], const void *value,
 	       size_t size, int flags);
+int s_removexattr(struct s pathname, const char name[]);
 int s_rename(struct s oldpathname, struct s newpathname);
 
 struct s tracing_folder(void);
@@ -64,6 +67,17 @@ int tracing_on(void);
 char *concat_file_name(const char *dir, const char *file);
 char *setup_mount_dir(const char *name);
 int delete_dir_tree(const char *dir_path, bool remove_root);
+
+#define TESTFUSEINNULL(_opcode)						\
+	do {								\
+		struct fuse_in_header *in_header =			\
+				(struct fuse_in_header *)bytes_in;	\
+		ssize_t res = read(fuse_dev, &bytes_in,			\
+			sizeof(bytes_in));				\
+									\
+		TESTEQUAL(in_header->opcode, _opcode);			\
+		TESTEQUAL(res, sizeof(*in_header));			\
+	} while (false)
 
 #define TESTFUSEIN(_opcode, in_struct)					\
 	do {								\

@@ -18,6 +18,8 @@
 #include <linux/fadvise.h>
 #include <linux/sched.h>
 #include <linux/sched/mm.h>
+#include <linux/mm_inline.h>
+#include <linux/string.h>
 #include <linux/uio.h>
 #include <linux/ksm.h>
 #include <linux/fs.h>
@@ -60,20 +62,114 @@ static int madvise_need_mmap_write(int behavior)
 	}
 }
 
+#ifdef CONFIG_ANON_VMA_NAME
+static struct anon_vma_name *anon_vma_name_alloc(const char *name)
+{
+	struct anon_vma_name *anon_name;
+	size_t count;
+
+	/* Add 1 for NUL terminator at the end of the anon_name->name */
+	count = strlen(name) + 1;
+	anon_name = kmalloc(struct_size(anon_name, name, count), GFP_KERNEL);
+	if (anon_name) {
+		kref_init(&anon_name->kref);
+		memcpy(anon_name->name, name, count);
+	}
+
+	return anon_name;
+}
+
+static void vma_anon_name_free(struct kref *kref)
+{
+	struct anon_vma_name *anon_name =
+			container_of(kref, struct anon_vma_name, kref);
+	kfree(anon_name);
+}
+
+static inline bool has_vma_anon_name(struct vm_area_struct *vma)
+{
+	return !vma->vm_file && vma->anon_name;
+}
+
+const char *vma_anon_name(struct vm_area_struct *vma)
+{
+	if (!has_vma_anon_name(vma))
+		return NULL;
+
+	mmap_assert_locked(vma->vm_mm);
+
+	return vma->anon_name->name;
+}
+
+void dup_vma_anon_name(struct vm_area_struct *orig_vma,
+		       struct vm_area_struct *new_vma)
+{
+	if (!has_vma_anon_name(orig_vma))
+		return;
+
+	kref_get(&orig_vma->anon_name->kref);
+	new_vma->anon_name = orig_vma->anon_name;
+}
+
+void free_vma_anon_name(struct vm_area_struct *vma)
+{
+	struct anon_vma_name *anon_name;
+
+	if (!has_vma_anon_name(vma))
+		return;
+
+	anon_name = vma->anon_name;
+	vma->anon_name = NULL;
+	kref_put(&anon_name->kref, vma_anon_name_free);
+}
+
+/* mmap_lock should be write-locked */
+static int replace_vma_anon_name(struct vm_area_struct *vma, const char *name)
+{
+	const char *anon_name;
+
+	if (!name) {
+		free_vma_anon_name(vma);
+		return 0;
+	}
+
+	anon_name = vma_anon_name(vma);
+	if (anon_name) {
+		/* Same name, nothing to do here */
+		if (!strcmp(name, anon_name))
+			return 0;
+
+		free_vma_anon_name(vma);
+	}
+	vma->anon_name = anon_vma_name_alloc(name);
+	if (!vma->anon_name)
+		return -ENOMEM;
+
+	return 0;
+}
+#else /* CONFIG_ANON_VMA_NAME */
+static int replace_vma_anon_name(struct vm_area_struct *vma, const char *name)
+{
+	if (name)
+		return -EINVAL;
+
+	return 0;
+}
+#endif /* CONFIG_ANON_VMA_NAME */
 /*
- * Update the vm_flags on regiion of a vma, splitting it or merging it as
+ * Update the vm_flags on region of a vma, splitting it or merging it as
  * necessary.  Must be called with mmap_sem held for writing;
  */
 static int madvise_update_vma(struct vm_area_struct *vma,
 			      struct vm_area_struct **prev, unsigned long start,
 			      unsigned long end, unsigned long new_flags,
-			      const char __user *new_anon_name)
+			      const char *name)
 {
 	struct mm_struct *mm = vma->vm_mm;
 	int error;
 	pgoff_t pgoff;
 
-	if (new_flags == vma->vm_flags && new_anon_name == vma_anon_name(vma)) {
+	if (new_flags == vma->vm_flags && is_same_vma_anon_name(vma, name)) {
 		*prev = vma;
 		return 0;
 	}
@@ -81,7 +177,7 @@ static int madvise_update_vma(struct vm_area_struct *vma,
 	pgoff = vma->vm_pgoff + ((start - vma->vm_start) >> PAGE_SHIFT);
 	*prev = vma_merge(mm, *prev, start, end, new_flags, vma->anon_vma,
 			  vma->vm_file, pgoff, vma_policy(vma),
-			  vma->vm_userfaultfd_ctx, new_anon_name);
+			  vma->vm_userfaultfd_ctx, name);
 	if (*prev) {
 		vma = *prev;
 		goto success;
@@ -90,20 +186,16 @@ static int madvise_update_vma(struct vm_area_struct *vma,
 	*prev = vma;
 
 	if (start != vma->vm_start) {
-		if (unlikely(mm->map_count >= sysctl_max_map_count)) {
-			error = -ENOMEM;
-			return error;
-		}
+		if (unlikely(mm->map_count >= sysctl_max_map_count))
+			return -ENOMEM;
 		error = __split_vma(mm, vma, start, 1);
 		if (error)
 			return error;
 	}
 
 	if (end != vma->vm_end) {
-		if (unlikely(mm->map_count >= sysctl_max_map_count)) {
-			error = -ENOMEM;
-			return error;
-		}
+		if (unlikely(mm->map_count >= sysctl_max_map_count))
+			return -ENOMEM;
 		error = __split_vma(mm, vma, end, 0);
 		if (error)
 			return error;
@@ -116,26 +208,13 @@ success:
 	vm_write_begin(vma);
 	WRITE_ONCE(vma->vm_flags, new_flags);
 	vm_write_end(vma);
+	if (!vma->vm_file) {
+		error = replace_vma_anon_name(vma, name);
+		if (error)
+			return error;
+	}
 
 	return 0;
-}
-
-static int madvise_vma_anon_name(struct vm_area_struct *vma,
-				 struct vm_area_struct **prev,
-				 unsigned long start, unsigned long end,
-				 unsigned long name_addr)
-{
-	int error;
-
-	/* Only anonymous mappings can be named */
-	if (vma->vm_file)
-		return -EINVAL;
-
-	error = madvise_update_vma(vma, prev, start, end, vma->vm_flags,
-				   (const char __user *)name_addr);
-	if (error == -ENOMEM)
-		error = -EAGAIN;
-	return error;
 }
 
 #ifdef CONFIG_SWAP
@@ -843,7 +922,7 @@ static int madvise_vma_behavior(struct vm_area_struct *vma,
 				unsigned long start, unsigned long end,
 				unsigned long behavior)
 {
-	int error = 0;
+	int error;
 	unsigned long new_flags = vma->vm_flags;
 
 	switch (behavior) {
@@ -871,18 +950,14 @@ static int madvise_vma_behavior(struct vm_area_struct *vma,
 		new_flags |= VM_DONTCOPY;
 		break;
 	case MADV_DOFORK:
-		if (vma->vm_flags & VM_IO) {
-			error = -EINVAL;
-			goto out;
-		}
+		if (vma->vm_flags & VM_IO)
+			return -EINVAL;
 		new_flags &= ~VM_DONTCOPY;
 		break;
 	case MADV_WIPEONFORK:
 		/* MADV_WIPEONFORK is only supported on anonymous memory. */
-		if (vma->vm_file || vma->vm_flags & VM_SHARED) {
-			error = -EINVAL;
-			goto out;
-		}
+		if (vma->vm_file || vma->vm_flags & VM_SHARED)
+			return -EINVAL;
 		new_flags |= VM_WIPEONFORK;
 		break;
 	case MADV_KEEPONFORK:
@@ -892,10 +967,8 @@ static int madvise_vma_behavior(struct vm_area_struct *vma,
 		new_flags |= VM_DONTDUMP;
 		break;
 	case MADV_DODUMP:
-		if (!is_vm_hugetlb_page(vma) && new_flags & VM_SPECIAL) {
-			error = -EINVAL;
-			goto out;
-		}
+		if (!is_vm_hugetlb_page(vma) && new_flags & VM_SPECIAL)
+			return -EINVAL;
 		new_flags &= ~VM_DONTDUMP;
 		break;
 	case MADV_MERGEABLE:
@@ -916,6 +989,10 @@ static int madvise_vma_behavior(struct vm_area_struct *vma,
 				   vma_anon_name(vma));
 
 out:
+	/*
+	 * madvise() returns EAGAIN if kernel resources, such as
+	 * slab, are temporarily unavailable.
+	 */
 	if (error == -ENOMEM)
 		error = -EAGAIN;
 	return error;
@@ -1033,8 +1110,8 @@ process_madvise_behavior_valid(int behavior)
  * Must be called with the mmap_lock held for reading or writing.
  */
 static
-int madvise_walk_vmas(unsigned long start, unsigned long end,
-		      unsigned long arg,
+int madvise_walk_vmas(struct mm_struct *mm, unsigned long start,
+		      unsigned long end, unsigned long arg,
 		      int (*visit)(struct vm_area_struct *vma,
 				   struct vm_area_struct **prev, unsigned long start,
 				   unsigned long end, unsigned long arg))
@@ -1049,7 +1126,7 @@ int madvise_walk_vmas(unsigned long start, unsigned long end,
 	 * ranges, just ignore them, but return -ENOMEM at the end.
 	 * - different from the way of handling in mlock etc.
 	 */
-	vma = find_vma_prev(current->mm, start, &prev);
+	vma = find_vma_prev(mm, start, &prev);
 	if (vma && start > vma->vm_start)
 		prev = vma;
 
@@ -1085,14 +1162,38 @@ int madvise_walk_vmas(unsigned long start, unsigned long end,
 		if (prev)
 			vma = prev->vm_next;
 		else	/* madvise_remove dropped mmap_lock */
-			vma = find_vma(current->mm, start);
+			vma = find_vma(mm, start);
 	}
 
 	return unmapped_error;
 }
 
-int madvise_set_anon_name(unsigned long start, unsigned long len_in,
-			  unsigned long name_addr)
+#ifdef CONFIG_ANON_VMA_NAME
+static int madvise_vma_anon_name(struct vm_area_struct *vma,
+				 struct vm_area_struct **prev,
+				 unsigned long start, unsigned long end,
+				 unsigned long name)
+{
+	int error;
+
+	/* Only anonymous mappings can be named */
+	if (vma->vm_file)
+		return -EBADF;
+
+	error = madvise_update_vma(vma, prev, start, end, vma->vm_flags,
+				   (const char *)name);
+
+	/*
+	 * madvise() returns EAGAIN if kernel resources, such as
+	 * slab, are temporarily unavailable.
+	 */
+	if (error == -ENOMEM)
+		error = -EAGAIN;
+	return error;
+}
+
+int madvise_set_anon_name(struct mm_struct *mm, unsigned long start,
+			  unsigned long len_in, const char *name)
 {
 	unsigned long end;
 	unsigned long len;
@@ -1112,9 +1213,10 @@ int madvise_set_anon_name(unsigned long start, unsigned long len_in,
 	if (end == start)
 		return 0;
 
-	return madvise_walk_vmas(start, end, name_addr, madvise_vma_anon_name);
+	return madvise_walk_vmas(mm, start, end, (unsigned long)name,
+				 madvise_vma_anon_name);
 }
-
+#endif /* CONFIG_ANON_VMA_NAME */
 /*
  * The madvise(2) system call.
  *
@@ -1184,7 +1286,7 @@ int madvise_set_anon_name(unsigned long start, unsigned long len_in,
 int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int behavior)
 {
 	unsigned long end;
-	int error = -EINVAL;
+	int error;
 	int write;
 	size_t len;
 	struct blk_plug plug;
@@ -1192,23 +1294,22 @@ int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int beh
 	start = untagged_addr(start);
 
 	if (!madvise_behavior_valid(behavior))
-		return error;
+		return -EINVAL;
 
 	if (!PAGE_ALIGNED(start))
-		return error;
+		return -EINVAL;
 	len = PAGE_ALIGN(len_in);
 
 	/* Check to see whether len was rounded up from small -ve to zero */
 	if (len_in && !len)
-		return error;
+		return -EINVAL;
 
 	end = start + len;
 	if (end < start)
-		return error;
+		return -EINVAL;
 
-	error = 0;
 	if (end == start)
-		return error;
+		return 0;
 
 #ifdef CONFIG_MEMORY_FAILURE
 	if (behavior == MADV_HWPOISON || behavior == MADV_SOFT_OFFLINE)
@@ -1224,7 +1325,8 @@ int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int beh
 	}
 
 	blk_start_plug(&plug);
-	error = madvise_walk_vmas(start, end, behavior, madvise_vma_behavior);
+	error = madvise_walk_vmas(mm, start, end, behavior,
+			madvise_vma_behavior);
 	blk_finish_plug(&plug);
 	if (write)
 		mmap_write_unlock(mm);
@@ -1305,8 +1407,7 @@ SYSCALL_DEFINE5(process_madvise, int, pidfd, const struct iovec __user *, vec,
 		iov_iter_advance(&iter, iovec.iov_len);
 	}
 
-	if (ret == 0)
-		ret = total_len - iov_iter_count(&iter);
+	ret = (total_len - iov_iter_count(&iter)) ? : ret;
 
 release_mm:
 	mmput(mm);

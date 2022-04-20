@@ -2281,34 +2281,65 @@ int __weak arch_prctl_spec_ctrl_set(struct task_struct *t, unsigned long which,
 
 #define PR_IO_FLUSHER (PF_MEMALLOC_NOIO | PF_LOCAL_THROTTLE)
 
-#ifdef CONFIG_MMU
+#ifdef CONFIG_ANON_VMA_NAME
+
+#define ANON_VMA_NAME_MAX_LEN		256
+#define ANON_VMA_NAME_INVALID_CHARS	"\\`$[]"
+
+static inline bool is_valid_name_char(char ch)
+{
+	/* printable ascii characters, excluding ANON_VMA_NAME_INVALID_CHARS */
+	return ch > 0x1f && ch < 0x7f &&
+		!strchr(ANON_VMA_NAME_INVALID_CHARS, ch);
+}
+
 static int prctl_set_vma(unsigned long opt, unsigned long addr,
-			 unsigned long len, unsigned long arg)
+			 unsigned long size, unsigned long arg)
 {
 	struct mm_struct *mm = current->mm;
+	const char __user *uname;
+	char *name, *pch;
 	int error;
-
-	mmap_write_lock(mm);
 
 	switch (opt) {
 	case PR_SET_VMA_ANON_NAME:
-		error = madvise_set_anon_name(addr, len, arg);
+		uname = (const char __user *)arg;
+		if (uname) {
+			name = strndup_user(uname, ANON_VMA_NAME_MAX_LEN);
+
+			if (IS_ERR(name))
+				return PTR_ERR(name);
+
+			for (pch = name; *pch != '\0'; pch++) {
+				if (!is_valid_name_char(*pch)) {
+					kfree(name);
+					return -EINVAL;
+				}
+			}
+		} else {
+			/* Reset the name */
+			name = NULL;
+		}
+
+		mmap_write_lock(mm);
+		error = madvise_set_anon_name(mm, addr, size, name);
+		mmap_write_unlock(mm);
+		kfree(name);
 		break;
 	default:
 		error = -EINVAL;
 	}
 
-	mmap_write_unlock(mm);
-
 	return error;
 }
-#else /* CONFIG_MMU */
+
+#else /* CONFIG_ANON_VMA_NAME */
 static int prctl_set_vma(unsigned long opt, unsigned long start,
-			 unsigned long len_in, unsigned long arg)
+			 unsigned long size, unsigned long arg)
 {
 	return -EINVAL;
 }
-#endif
+#endif /* CONFIG_ANON_VMA_NAME */
 
 SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		unsigned long, arg4, unsigned long, arg5)
