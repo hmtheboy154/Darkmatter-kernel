@@ -1170,7 +1170,7 @@ struct file *filp_open(const char *filename, int flags, umode_t mode)
 	}
 	return file;
 }
-EXPORT_SYMBOL_NS(filp_open, ANDROID_GKI_VFS_EXPORT_ONLY);
+EXPORT_SYMBOL(filp_open);
 
 /* ANDROID: Allow drivers to open only block files from kernel mode */
 struct file *filp_open_block(const char *filename, int flags, umode_t mode)
@@ -1402,7 +1402,7 @@ int generic_file_open(struct inode * inode, struct file * filp)
 	return 0;
 }
 
-EXPORT_SYMBOL_NS(generic_file_open, ANDROID_GKI_VFS_EXPORT_ONLY);
+EXPORT_SYMBOL(generic_file_open);
 
 /*
  * This is used by subsystems that don't want seekable
