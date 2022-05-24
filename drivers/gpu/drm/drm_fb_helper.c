@@ -1131,6 +1131,8 @@ retry:
 		replaced |= drm_property_replace_blob(&crtc_state->ctm, NULL);
 		replaced |= drm_property_replace_blob(&crtc_state->shaper_lut,
 						      NULL);
+		replaced |= drm_property_replace_blob(&crtc_state->lut3d,
+						      NULL);
 		replaced |= drm_property_replace_blob(&crtc_state->gamma_lut,
 						      gamma_lut);
 

@@ -152,7 +152,7 @@ struct drm_crtc_state {
 	bool zpos_changed : 1;
 	/**
 	 * @color_mgmt_changed: Color management properties have changed
-	 * (@shaper_lut, @gamma_lut, @degamma_lut or @ctm). Used by
+	 * (@shaper_lut, @lut3d, @gamma_lut, @degamma_lut or @ctm). Used by
 	 * the atomic helpers and drivers to steer the atomic commit control
 	 * flow.
 	 */
@@ -288,6 +288,16 @@ struct drm_crtc_state {
 	 * of &struct drm_color_lut.
 	 */
 	struct drm_property_blob *shaper_lut;
+
+	/**
+	 * @lut3d:
+	 *
+	 * 3D Lookup table for converting pixel data. Position where it takes
+	 * place depends on hw design, after @ctm or @gamma_lut. See
+	 * drm_crtc_enable_color_mgmt(). The blob (if not NULL) is an array of
+	 * &struct drm_color_lut.
+	 */
+	struct drm_property_blob *lut3d;
 
 	/**
 	 * @target_vblank:
