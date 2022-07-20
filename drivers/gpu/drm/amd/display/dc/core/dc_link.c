@@ -1090,8 +1090,6 @@ static bool detect_link_and_local_sink(struct dc_link *link,
 		}
 
 		case SIGNAL_TYPE_EDP: {
-			read_current_link_settings_on_detect(link);
-
 			detect_edp_sink_caps(link);
 			read_current_link_settings_on_detect(link);
 
