@@ -255,14 +255,13 @@ static int __set_legacy_tf(struct dc_transfer_func *func,
  * @func: transfer function
  * @lut: lookup table that defines the color space
  * @lut_size: size of respective lut
- * @has_rom: if ROM can be used for hardcoded curve
  *
  * Returns:
  * 0 in case of success. -ENOMEM if fails.
  */
 static int __set_output_tf(struct dc_transfer_func *func,
-			   const struct drm_color_lut *lut, uint32_t lut_size,
-			   bool has_rom)
+			   const struct drm_color_lut *lut,
+			   uint32_t lut_size)
 {
 	struct dc_gamma *gamma = NULL;
 	struct calculate_buffer cal_buffer = {0};
@@ -279,24 +278,13 @@ static int __set_output_tf(struct dc_transfer_func *func,
 	gamma->num_entries = lut_size;
 	__drm_lut_to_dc_gamma(lut, gamma, false);
 
-	if (func->tf == TRANSFER_FUNCTION_LINEAR) {
-		/*
-		 * Color module doesn't like calculating regamma params
-		 * on top of a linear input. But degamma params can be used
-		 * instead to simulate this.
-		 */
-		gamma->type = GAMMA_CUSTOM;
-		res = mod_color_calculate_degamma_params(NULL, func,
-							gamma, true);
-	} else {
-		/*
-		 * Assume sRGB. The actual mapping will depend on whether the
-		 * input was legacy or not.
-		 */
-		gamma->type = GAMMA_CS_TFM_1D;
-		res = mod_color_calculate_regamma_params(func, gamma, false,
-							 has_rom, NULL, &cal_buffer);
-	}
+	/*
+	 * Color module doesn't like calculating regamma params
+	 * on top of a linear input. But degamma params can be used
+	 * instead to simulate this.
+	 */
+	gamma->type = GAMMA_CUSTOM;
+	res = mod_color_calculate_degamma_params(NULL, func, gamma, true);
 
 	dc_gamma_release(&gamma);
 
@@ -450,7 +438,7 @@ int amdgpu_dm_update_crtc_color_mgmt(struct dm_crtc_state *crtc)
 		stream->out_transfer_func->tf = TRANSFER_FUNCTION_LINEAR;
 
 		r = __set_output_tf(stream->out_transfer_func, regamma_lut,
-				    regamma_size, has_rom);
+				    regamma_size);
 		if (r)
 			return r;
 	} else {
