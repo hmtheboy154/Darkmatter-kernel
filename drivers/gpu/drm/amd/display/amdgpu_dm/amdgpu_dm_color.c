@@ -352,6 +352,151 @@ static int __set_input_tf(struct dc_transfer_func *func,
 	return res ? 0 : -ENOMEM;
 }
 
+static void __to_dc_lut3d_color(struct dc_rgb *rgb,
+				const struct drm_color_lut lut,
+				int bit_precision)
+{
+	rgb->red = drm_color_lut_extract(lut.red, bit_precision);
+	rgb->green = drm_color_lut_extract(lut.green, bit_precision);
+	rgb->blue  = drm_color_lut_extract(lut.blue, bit_precision);
+}
+
+static void __drm_3dlut_to_dc_3dlut(const struct drm_color_lut *lut,
+				    uint32_t lut_size,
+				    struct dc_3dlut *lut3d)
+{
+	int lut_i, i;
+
+	for (lut_i = 0, i = 0; i < lut_size - 4; lut_i++, i += 4) {
+		/* We should consider the 3dlut RGB values are distributed
+		 * along four arrays lut0-3 where the first sizes 1229 and the
+		 * other 1228. The bit depth supported for 3dlut channel is
+		 * 12-bit, but DC also supports 10-bit.
+		 *
+		 * TODO: improve color pipeline API to enable the userspace set
+		 * bit depth and 3D LUT size/stride, as specified by VA-API.
+		 */
+		__to_dc_lut3d_color(&lut3d->lut_3d.tetrahedral_17.lut0[lut_i], lut[i], 12);
+		__to_dc_lut3d_color(&lut3d->lut_3d.tetrahedral_17.lut1[lut_i], lut[i + 1], 12);
+		__to_dc_lut3d_color(&lut3d->lut_3d.tetrahedral_17.lut2[lut_i], lut[i + 2], 12);
+		__to_dc_lut3d_color(&lut3d->lut_3d.tetrahedral_17.lut3[lut_i], lut[i + 3], 12);
+	}
+	/* lut0 has 1229 points (lut_size/4 + 1) */
+	__to_dc_lut3d_color(&lut3d->lut_3d.tetrahedral_17.lut0[lut_i], lut[i], 12);
+}
+
+/* amdgpu_dm_atomic_lut3d - set DRM 3D LUT to DC stream
+ * @stream: DC stream state to set shaper LUT and 3D LUT
+ * @drm_lut3d: DRM CRTC (user) 3D LUT
+ * @drm_lut3d_size: size of 3D LUT
+ * @lut3d: DC 3D LUT
+ *
+ * Map DRM CRTC 3D LUT to DC 3D LUT and all necessary bits to program it
+ * on DCN MPC accordingly.
+ */
+static void amdgpu_dm_atomic_lut3d(struct dc_stream_state *stream,
+				   const struct drm_color_lut *lut,
+				   uint32_t lut_size,
+				   struct dc_3dlut *lut3d)
+{
+	ASSERT(lut3d && lut_size == MAX_COLOR_3DLUT_ENTRIES);
+
+	__drm_3dlut_to_dc_3dlut(lut, lut_size, lut3d);
+
+	/* Stride and bit depth is not programmable by API so far. Therefore,
+	 * only supports 17x17x17 3D LUT with 12-bit.
+	 */
+	lut3d->lut_3d.use_tetrahedral_9 = false;
+	lut3d->lut_3d.use_12bits = true;
+	lut3d->state.bits.initialized = 1;
+
+	stream->lut3d_func = lut3d;
+}
+
+static int amdgpu_dm_atomic_shaper_lut(struct dc_stream_state *stream,
+				       struct dc_transfer_func *func_shaper_new)
+{
+	/* We don't get DRM shaper LUT yet. We assume the input color space is already
+	 * delinearized, so we don't need a shaper LUT and we can just BYPASS
+	 */
+	func_shaper_new->type = TF_TYPE_BYPASS;
+	func_shaper_new->tf = TRANSFER_FUNCTION_LINEAR;
+	stream->func_shaper = func_shaper_new;
+
+	return 0;
+}
+
+/* amdgpu_dm_atomic_shaper_lut3d - set DRM CRTC shaper LUT and 3D LUT to DC
+ * interface
+ * @dc: Display Core control structure
+ * @stream: DC stream state to set shaper LUT and 3D LUT
+ * @drm_lut3d: DRM CRTC (user) 3D LUT
+ * @drm_lut3d_size: size of 3D LUT
+ *
+ * Returns:
+ * 0 on success.
+ */
+static int amdgpu_dm_atomic_shaper_lut3d(struct dc *dc,
+					 struct dc_stream_state *stream,
+					 const struct drm_color_lut *drm_lut3d,
+					 uint32_t drm_lut3d_size)
+{
+	struct dc_3dlut *lut3d_func_new;
+	struct dc_transfer_func *func_shaper_new;
+
+	lut3d_func_new = (struct dc_3dlut *) stream->lut3d_func;
+	func_shaper_new = (struct dc_transfer_func *) stream->func_shaper;
+
+	amdgpu_dm_atomic_lut3d(stream, drm_lut3d, drm_lut3d_size, lut3d_func_new);
+
+	return amdgpu_dm_atomic_shaper_lut(stream, func_shaper_new);
+}
+
+/**
+ * amdgpu_dm_lut3d_size - get expected size according to hw color caps
+ * @adev: amdgpu device
+ * @lut_size: default size
+ *
+ * Return:
+ * lut_size if DC 3D LUT is supported, zero otherwise.
+ */
+static uint32_t amdgpu_dm_get_lut3d_size(struct amdgpu_device *adev,
+					 uint32_t lut_size)
+{
+	return adev->dm.dc->caps.color.mpc.num_3dluts ? lut_size : 0;
+}
+
+/**
+ * amdgpu_dm_verify_lut3d_size - verifies if 3D LUT is supported and if DRM 3D
+ * LUT matches the hw supported size
+ * @adev: amdgpu device
+ * @crtc_state: the DRM CRTC state
+ *
+ * Verifies if post-blending (MPC) 3D LUT is supported by the HW (DCN 3.0 or
+ * newer) and if the DRM 3D LUT matches the supported size.
+ *
+ * Returns:
+ * 0 on success. -EINVAL if lut size are invalid.
+ */
+int amdgpu_dm_verify_lut3d_size(struct amdgpu_device *adev,
+				const struct drm_crtc_state *crtc_state)
+{
+	const struct drm_color_lut *lut3d = NULL;
+	uint32_t exp_size, size;
+
+	exp_size = amdgpu_dm_get_lut3d_size(adev, MAX_COLOR_3DLUT_ENTRIES);
+
+	lut3d = __extract_blob_lut(crtc_state->lut3d, &size);
+
+	if (lut3d && size != exp_size) {
+		DRM_DEBUG_DRIVER("Invalid Gamma 3D LUT size. Should be %u but got %u.\n",
+				 exp_size, size);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 /**
  * amdgpu_dm_verify_lut_sizes - verifies if DRM luts match the hw supported sizes
  * @crtc_state: the DRM CRTC state
@@ -417,8 +562,11 @@ int amdgpu_dm_update_crtc_color_mgmt(struct dm_crtc_state *crtc)
 	bool has_rom = adev->asic_type <= CHIP_RAVEN;
 	struct drm_color_ctm *ctm = NULL;
 	const struct drm_color_lut *degamma_lut, *regamma_lut;
+	const struct drm_color_lut *lut3d;
 	uint32_t degamma_size, regamma_size;
+	uint32_t lut3d_size;
 	bool has_regamma, has_degamma;
+	bool has_lut3d;
 	bool is_legacy;
 	int r;
 
@@ -426,11 +574,18 @@ int amdgpu_dm_update_crtc_color_mgmt(struct dm_crtc_state *crtc)
 	if (r)
 		return r;
 
+	r =  amdgpu_dm_verify_lut3d_size(adev, &crtc->base);
+	if (r)
+		return r;
+
 	degamma_lut = __extract_blob_lut(crtc->base.degamma_lut, &degamma_size);
+	lut3d = __extract_blob_lut(crtc->base.lut3d, &lut3d_size);
 	regamma_lut = __extract_blob_lut(crtc->base.gamma_lut, &regamma_size);
 
 	has_degamma =
 		degamma_lut && !__is_lut_linear(degamma_lut, degamma_size);
+
+	has_lut3d = lut3d != NULL;
 
 	has_regamma =
 		regamma_lut && !__is_lut_linear(regamma_lut, regamma_size);
@@ -469,6 +624,16 @@ int amdgpu_dm_update_crtc_color_mgmt(struct dm_crtc_state *crtc)
 		if (r)
 			return r;
 	} else {
+		if (has_lut3d) {
+			r = amdgpu_dm_atomic_shaper_lut3d(adev->dm.dc, stream,
+							  lut3d, lut3d_size);
+			if (r)
+				return r;
+		}
+		/* Note: OGAM is disabled if 3D LUT is successfully programmed.
+		 * See params and set_output_gamma in
+		 * dcn30_set_output_transfer_func()
+		 */
 		regamma_size = has_regamma ? regamma_size : 0;
 		r = amdgpu_dm_set_atomic_regamma(stream, regamma_lut, regamma_size);
 		if (r)
