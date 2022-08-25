@@ -458,6 +458,11 @@ int amdgpu_dm_crtc_init(struct amdgpu_display_manager *dm,
 	drm_crtc_enable_color_mgmt(&acrtc->base, is_dcn ? MAX_COLOR_LUT_ENTRIES : 0,
 				   true, MAX_COLOR_LUT_ENTRIES);
 
+	if (dm->dc->caps.color.mpc.num_3dluts)
+		drm_crtc_enable_lut3d(&acrtc->base,
+				      MAX_COLOR_LUT_ENTRIES,
+				      MAX_COLOR_3DLUT_ENTRIES);
+
 	drm_mode_crtc_set_gamma_size(&acrtc->base, MAX_COLOR_LEGACY_LUT_ENTRIES);
 
 	return 0;
