@@ -1405,7 +1405,7 @@ static void io_req_track_inflight(struct io_kiocb *req)
 {
 	if (!(req->flags & REQ_F_INFLIGHT)) {
 		req->flags |= REQ_F_INFLIGHT;
-		atomic_inc(&current->io_uring->inflight_tracked);
+		atomic_inc(&req->task->io_uring->inflight_tracked);
 	}
 }
 
@@ -2686,8 +2686,12 @@ static bool io_rw_should_reissue(struct io_kiocb *req)
 
 static bool __io_complete_rw_common(struct io_kiocb *req, long res)
 {
-	if (req->rw.kiocb.ki_flags & IOCB_WRITE)
+	if (req->rw.kiocb.ki_flags & IOCB_WRITE) {
 		kiocb_end_write(req);
+		fsnotify_modify(req->file);
+	} else {
+		fsnotify_access(req->file);
+	}
 	if (res != req->result) {
 		if ((res == -EAGAIN || res == -EOPNOTSUPP) &&
 		    io_rw_should_reissue(req)) {
@@ -2932,15 +2936,24 @@ static int io_prep_rw(struct io_kiocb *req, const struct io_uring_sqe *sqe,
 		kiocb->ki_complete = io_complete_rw;
 	}
 
+	/* used for fixed read/write too - just read unconditionally */
+	req->buf_index = READ_ONCE(sqe->buf_index);
+	req->imu = NULL;
+
 	if (req->opcode == IORING_OP_READ_FIXED ||
 	    req->opcode == IORING_OP_WRITE_FIXED) {
-		req->imu = NULL;
+		struct io_ring_ctx *ctx = req->ctx;
+		u16 index;
+
+		if (unlikely(req->buf_index >= ctx->nr_user_bufs))
+			return -EFAULT;
+		index = array_index_nospec(req->buf_index, ctx->nr_user_bufs);
+		req->imu = ctx->user_bufs[index];
 		io_req_set_rsrc_node(req);
 	}
 
 	req->rw.addr = READ_ONCE(sqe->addr);
 	req->rw.len = READ_ONCE(sqe->len);
-	req->buf_index = READ_ONCE(sqe->buf_index);
 	return 0;
 }
 
@@ -3066,18 +3079,9 @@ static int __io_import_fixed(struct io_kiocb *req, int rw, struct iov_iter *iter
 
 static int io_import_fixed(struct io_kiocb *req, int rw, struct iov_iter *iter)
 {
-	struct io_ring_ctx *ctx = req->ctx;
-	struct io_mapped_ubuf *imu = req->imu;
-	u16 index, buf_index = req->buf_index;
-
-	if (likely(!imu)) {
-		if (unlikely(buf_index >= ctx->nr_user_bufs))
-			return -EFAULT;
-		index = array_index_nospec(buf_index, ctx->nr_user_bufs);
-		imu = READ_ONCE(ctx->user_bufs[index]);
-		req->imu = imu;
-	}
-	return __io_import_fixed(req, rw, iter, imu);
+	if (WARN_ON_ONCE(!req->imu))
+		return -EFAULT;
+	return __io_import_fixed(req, rw, iter, req->imu);
 }
 
 static void io_ring_submit_unlock(struct io_ring_ctx *ctx, bool needs_lock)
@@ -3716,7 +3720,12 @@ done:
 copy_iov:
 		iov_iter_restore(iter, state);
 		ret = io_setup_async_rw(req, iovec, inline_vecs, iter, false);
-		return ret ?: -EAGAIN;
+		if (!ret) {
+			if (kiocb->ki_flags & IOCB_WRITE)
+				kiocb_end_write(req);
+			return -EAGAIN;
+		}
+		return ret;
 	}
 out_free:
 	/* it's reportedly faster than delegating the null check to kfree() */
@@ -4183,6 +4192,8 @@ static int io_fallocate(struct io_kiocb *req, unsigned int issue_flags)
 				req->sync.len);
 	if (ret < 0)
 		req_set_fail(req);
+	else
+		fsnotify_modify(req->file);
 	io_req_complete(req, ret);
 	return 0;
 }
@@ -4471,7 +4482,8 @@ static int io_provide_buffers(struct io_kiocb *req, unsigned int issue_flags)
 
 	ret = io_add_buffers(p, &head);
 	if (ret >= 0 && !list) {
-		ret = xa_insert(&ctx->io_buffers, p->bgid, head, GFP_KERNEL);
+		ret = xa_insert(&ctx->io_buffers, p->bgid, head,
+				GFP_KERNEL_ACCOUNT);
 		if (ret < 0)
 			__io_remove_buffers(ctx, head, p->bgid, -1U);
 	}
@@ -4788,6 +4800,8 @@ static int io_sendmsg_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 		return -EINVAL;
 	if (unlikely(sqe->addr2 || sqe->file_index))
 		return -EINVAL;
+	if (unlikely(sqe->addr2 || sqe->file_index || sqe->ioprio))
+		return -EINVAL;
 
 	sr->umsg = u64_to_user_ptr(READ_ONCE(sqe->addr));
 	sr->len = READ_ONCE(sqe->len);
@@ -5010,6 +5024,8 @@ static int io_recvmsg_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	if (unlikely(req->ctx->flags & IORING_SETUP_IOPOLL))
 		return -EINVAL;
 	if (unlikely(sqe->addr2 || sqe->file_index))
+		return -EINVAL;
+	if (unlikely(sqe->addr2 || sqe->file_index || sqe->ioprio))
 		return -EINVAL;
 
 	sr->umsg = u64_to_user_ptr(READ_ONCE(sqe->addr));
@@ -5662,7 +5678,6 @@ static int io_arm_poll_handler(struct io_kiocb *req)
 	struct async_poll *apoll;
 	struct io_poll_table ipt;
 	__poll_t ret, mask = EPOLLONESHOT | POLLERR | POLLPRI;
-	int rw;
 
 	if (!req->file || !file_can_poll(req->file))
 		return IO_APOLL_ABORTED;
@@ -5672,7 +5687,6 @@ static int io_arm_poll_handler(struct io_kiocb *req)
 		return IO_APOLL_ABORTED;
 
 	if (def->pollin) {
-		rw = READ;
 		mask |= POLLIN | POLLRDNORM;
 
 		/* If reading from MSG_ERRQUEUE using recvmsg, ignore POLLIN */
@@ -5680,13 +5694,8 @@ static int io_arm_poll_handler(struct io_kiocb *req)
 		    (req->sr_msg.msg_flags & MSG_ERRQUEUE))
 			mask &= ~POLLIN;
 	} else {
-		rw = WRITE;
 		mask |= POLLOUT | POLLWRNORM;
 	}
-
-	/* if we can't nonblock try, then no point in arming a poll handler */
-	if (!io_file_supports_nowait(req, rw))
-		return IO_APOLL_ABORTED;
 
 	apoll = kmalloc(sizeof(*apoll), GFP_ATOMIC);
 	if (unlikely(!apoll))
@@ -6863,7 +6872,7 @@ static void io_wq_submit_work(struct io_wq_work *work)
 			 * forcing a sync submission from here, since we can't
 			 * wait for request slots on the block side.
 			 */
-			if (ret != -EAGAIN)
+			if (ret != -EAGAIN || !(req->ctx->flags & IORING_SETUP_IOPOLL))
 				break;
 			cond_resched();
 		} while (1);
@@ -7940,11 +7949,19 @@ static void __io_sqe_files_unregister(struct io_ring_ctx *ctx)
 
 static int io_sqe_files_unregister(struct io_ring_ctx *ctx)
 {
+	unsigned nr = ctx->nr_user_files;
 	int ret;
 
 	if (!ctx->file_data)
 		return -ENXIO;
+
+	/*
+	 * Quiesce may unlock ->uring_lock, and while it's not held
+	 * prevent new requests using the table.
+	 */
+	ctx->nr_user_files = 0;
 	ret = io_rsrc_ref_quiesce(ctx->file_data, ctx);
+	ctx->nr_user_files = nr;
 	if (!ret)
 		__io_sqe_files_unregister(ctx);
 	return ret;
@@ -8904,12 +8921,19 @@ static void __io_sqe_buffers_unregister(struct io_ring_ctx *ctx)
 
 static int io_sqe_buffers_unregister(struct io_ring_ctx *ctx)
 {
+	unsigned nr = ctx->nr_user_bufs;
 	int ret;
 
 	if (!ctx->buf_data)
 		return -ENXIO;
 
+	/*
+	 * Quiesce may unlock ->uring_lock, and while it's not held
+	 * prevent new requests using the table.
+	 */
+	ctx->nr_user_bufs = 0;
 	ret = io_rsrc_ref_quiesce(ctx->buf_data, ctx);
+	ctx->nr_user_bufs = nr;
 	if (!ret)
 		__io_sqe_buffers_unregister(ctx);
 	return ret;

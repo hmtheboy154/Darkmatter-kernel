@@ -75,6 +75,8 @@
 
 #include <trace/events/sched.h>
 
+EXPORT_TRACEPOINT_SYMBOL_GPL(task_rename);
+
 static int bprm_creds_from_file(struct linux_binprm *bprm);
 
 int suid_dumpable = 0;
@@ -1301,7 +1303,10 @@ int begin_new_exec(struct linux_binprm * bprm)
 	bprm->mm = NULL;
 
 #ifdef CONFIG_POSIX_TIMERS
-	exit_itimers(me->signal);
+	spin_lock_irq(&me->sighand->siglock);
+	posix_cpu_timers_exit(me);
+	spin_unlock_irq(&me->sighand->siglock);
+	exit_itimers(me);
 	flush_itimer_signals();
 #endif
 

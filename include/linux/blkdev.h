@@ -25,6 +25,7 @@
 #include <linux/pm.h>
 #include <linux/sbitmap.h>
 #include <linux/android_kabi.h>
+#include <linux/android_vendor.h>
 
 struct module;
 struct request_queue;
@@ -264,8 +265,6 @@ static inline unsigned short req_get_ioprio(struct request *req)
 
 #include <linux/elevator.h>
 
-struct blk_queue_ctx;
-
 struct bio_vec;
 
 enum blk_eh_timer_return {
@@ -336,6 +335,8 @@ struct queue_limits {
 	enum blk_zoned_model	zoned;
 
 	ANDROID_KABI_RESERVE(1);
+
+	ANDROID_OEM_DATA(1);
 };
 
 typedef int (*report_zones_cb)(struct blk_zone *zone, unsigned int idx,
@@ -571,6 +572,8 @@ struct request_queue {
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);
+
+	ANDROID_OEM_DATA(1);
 };
 
 /* Keep blk_queue_flag_name[] in sync with the definitions below */
@@ -1400,6 +1403,17 @@ static inline unsigned int queue_max_zone_append_sectors(const struct request_qu
 	return min(l->max_zone_append_sectors, l->max_sectors);
 }
 
+static inline unsigned int
+bdev_max_zone_append_sectors(struct block_device *bdev)
+{
+	return queue_max_zone_append_sectors(bdev_get_queue(bdev));
+}
+
+static inline unsigned int bdev_max_segments(struct block_device *bdev)
+{
+	return queue_max_segments(bdev_get_queue(bdev));
+}
+
 static inline unsigned queue_logical_block_size(const struct request_queue *q)
 {
 	int retval = 512;
@@ -1877,6 +1891,7 @@ struct block_device_operations {
 
 	ANDROID_KABI_RESERVE(1);
 	ANDROID_KABI_RESERVE(2);
+	ANDROID_OEM_DATA(1);
 };
 
 #ifdef CONFIG_COMPAT

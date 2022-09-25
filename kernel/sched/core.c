@@ -46,6 +46,13 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(sched_util_est_cfs_tp);
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_util_est_se_tp);
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_update_nr_running_tp);
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_switch);
+EXPORT_TRACEPOINT_SYMBOL_GPL(sched_waking);
+#ifdef CONFIG_SCHEDSTATS
+EXPORT_TRACEPOINT_SYMBOL_GPL(sched_stat_sleep);
+EXPORT_TRACEPOINT_SYMBOL_GPL(sched_stat_wait);
+EXPORT_TRACEPOINT_SYMBOL_GPL(sched_stat_iowait);
+EXPORT_TRACEPOINT_SYMBOL_GPL(sched_stat_blocked);
+#endif
 
 DEFINE_PER_CPU_SHARED_ALIGNED(struct rq, runqueues);
 EXPORT_SYMBOL_GPL(runqueues);
@@ -539,10 +546,10 @@ void double_rq_lock(struct rq *rq1, struct rq *rq2)
 		swap(rq1, rq2);
 
 	raw_spin_rq_lock(rq1);
-	if (__rq_lockp(rq1) == __rq_lockp(rq2))
-		return;
+	if (__rq_lockp(rq1) != __rq_lockp(rq2))
+		raw_spin_rq_lock_nested(rq2, SINGLE_DEPTH_NESTING);
 
-	raw_spin_rq_lock_nested(rq2, SINGLE_DEPTH_NESTING);
+	double_rq_clock_clear_update(rq1, rq2);
 }
 EXPORT_SYMBOL_GPL(double_rq_lock);
 #endif
@@ -2505,6 +2512,7 @@ void set_cpus_allowed_common(struct task_struct *p, const struct cpumask *new_ma
 
 	cpumask_copy(&p->cpus_mask, new_mask);
 	p->nr_cpus_allowed = cpumask_weight(new_mask);
+	trace_android_rvh_set_cpus_allowed_comm(p, new_mask);
 }
 
 static void
@@ -2868,6 +2876,7 @@ static int __set_cpus_allowed_ptr_locked(struct task_struct *p,
 	 */
 	dest_cpu = cpumask_any_and_distribute(cpu_valid_mask, new_mask);
 	trace_android_rvh_set_cpus_allowed_ptr_locked(cpu_valid_mask, new_mask, &dest_cpu);
+	trace_android_rvh_set_cpus_allowed_by_task(cpu_valid_mask, new_mask, p, &dest_cpu);
 
 	if (dest_cpu >= nr_cpu_ids) {
 		ret = -EINVAL;
@@ -3787,13 +3796,17 @@ bool cpus_share_cache(int this_cpu, int that_cpu)
 	return per_cpu(sd_llc_id, this_cpu) == per_cpu(sd_llc_id, that_cpu);
 }
 
-static inline bool ttwu_queue_cond(int cpu, int wake_flags)
+static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
 {
 	/*
 	 * Do not complicate things with the async wake_list while the CPU is
 	 * in hotplug state.
 	 */
 	if (!cpu_active(cpu))
+		return false;
+
+	/* Ensure the task will still be allowed to run on the CPU. */
+	if (!cpumask_test_cpu(cpu, p->cpus_ptr))
 		return false;
 
 	/*
@@ -3803,13 +3816,21 @@ static inline bool ttwu_queue_cond(int cpu, int wake_flags)
 	if (!cpus_share_cache(smp_processor_id(), cpu))
 		return true;
 
+	if (cpu == smp_processor_id())
+		return false;
+
 	/*
-	 * If the task is descheduling and the only running task on the
-	 * CPU then use the wakelist to offload the task activation to
-	 * the soon-to-be-idle CPU as the current CPU is likely busy.
-	 * nr_running is checked to avoid unnecessary task stacking.
+	 * If the wakee cpu is idle, or the task is descheduling and the
+	 * only running task on the CPU, then use the wakelist to offload
+	 * the task activation to the idle (or soon-to-be-idle) CPU as
+	 * the current CPU is likely busy. nr_running is checked to
+	 * avoid unnecessary task stacking.
+	 *
+	 * Note that we can only get here with (wakee) p->on_rq=0,
+	 * p->on_cpu can be whatever, we've done the dequeue, so
+	 * the wakee has been accounted out of ->nr_running.
 	 */
-	if ((wake_flags & WF_ON_CPU) && cpu_rq(cpu)->nr_running <= 1)
+	if (!cpu_rq(cpu)->nr_running)
 		return true;
 
 	return false;
@@ -3819,13 +3840,9 @@ static bool ttwu_queue_wakelist(struct task_struct *p, int cpu, int wake_flags)
 {
 	bool cond = false;
 
-	trace_android_rvh_ttwu_cond(&cond);
+	trace_android_rvh_ttwu_cond(cpu, &cond);
 
-	if ((sched_feat(TTWU_QUEUE) && ttwu_queue_cond(cpu, wake_flags)) ||
-			cond) {
-		if (WARN_ON_ONCE(cpu == smp_processor_id()))
-			return false;
-
+	if ((sched_feat(TTWU_QUEUE) && ttwu_queue_cond(p, cpu)) || cond) {
 		sched_clock_cpu(cpu); /* Sync clocks across CPUs */
 		__ttwu_queue_wakelist(p, cpu, wake_flags);
 		return true;
@@ -4163,7 +4180,7 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	 * scheduling.
 	 */
 	if (smp_load_acquire(&p->on_cpu) &&
-	    ttwu_queue_wakelist(p, task_cpu(p), wake_flags | WF_ON_CPU))
+	    ttwu_queue_wakelist(p, task_cpu(p), wake_flags))
 		goto unlock;
 
 	/*
@@ -4693,7 +4710,8 @@ static inline void prepare_task(struct task_struct *next)
 	 * Claim the task as running, we do this before switching to it
 	 * such that any running task will have this set.
 	 *
-	 * See the ttwu() WF_ON_CPU case and its ordering comment.
+	 * See the smp_load_acquire(&p->on_cpu) case in ttwu() and
+	 * its ordering comment.
 	 */
 	WRITE_ONCE(next->on_cpu, 1);
 #endif
@@ -4738,26 +4756,56 @@ static void do_balance_callbacks(struct rq *rq, struct callback_head *head)
 
 static void balance_push(struct rq *rq);
 
+/*
+ * balance_push_callback is a right abuse of the callback interface and plays
+ * by significantly different rules.
+ *
+ * Where the normal balance_callback's purpose is to be ran in the same context
+ * that queued it (only later, when it's safe to drop rq->lock again),
+ * balance_push_callback is specifically targeted at __schedule().
+ *
+ * This abuse is tolerated because it places all the unlikely/odd cases behind
+ * a single test, namely: rq->balance_callback == NULL.
+ */
 struct callback_head balance_push_callback = {
 	.next = NULL,
 	.func = (void (*)(struct callback_head *))balance_push,
 };
 EXPORT_SYMBOL_GPL(balance_push_callback);
 
-static inline struct callback_head *splice_balance_callbacks(struct rq *rq)
+static inline struct callback_head *
+__splice_balance_callbacks(struct rq *rq, bool split)
 {
 	struct callback_head *head = rq->balance_callback;
 
+	if (likely(!head))
+		return NULL;
+
 	lockdep_assert_rq_held(rq);
-	if (head)
+	/*
+	 * Must not take balance_push_callback off the list when
+	 * splice_balance_callbacks() and balance_callbacks() are not
+	 * in the same rq->lock section.
+	 *
+	 * In that case it would be possible for __schedule() to interleave
+	 * and observe the list empty.
+	 */
+	if (split && head == &balance_push_callback)
+		head = NULL;
+	else
 		rq->balance_callback = NULL;
 
 	return head;
 }
 
+static inline struct callback_head *splice_balance_callbacks(struct rq *rq)
+{
+	return __splice_balance_callbacks(rq, true);
+}
+
 static void __balance_callbacks(struct rq *rq)
 {
-	do_balance_callbacks(rq, splice_balance_callbacks(rq));
+	do_balance_callbacks(rq, __splice_balance_callbacks(rq, false));
 }
 
 static inline void balance_callbacks(struct rq *rq, struct callback_head *head)
@@ -5267,6 +5315,7 @@ unsigned long long task_sched_runtime(struct task_struct *p)
 
 	return ns;
 }
+EXPORT_SYMBOL_GPL(task_sched_runtime);
 
 #ifdef CONFIG_SCHED_DEBUG
 static u64 cpu_resched_latency(struct rq *rq)
@@ -6489,8 +6538,12 @@ static inline void sched_submit_work(struct task_struct *tsk)
 		preempt_enable_no_resched();
 	}
 
-	if (tsk_is_pi_blocked(tsk))
-		return;
+	/*
+	 * spinlock and rwlock must not flush block requests.  This will
+	 * deadlock if the callback attempts to acquire a lock which is
+	 * already acquired.
+	 */
+	SCHED_WARN_ON(current->__state & TASK_RTLOCK_WAIT);
 
 	/*
 	 * If we are going to sleep and we have plugged IO queued,
@@ -8131,7 +8184,8 @@ out_free_cpus_allowed:
 long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 {
 	struct task_struct *p;
-	int retval;
+	int retval = 0;
+	int skip = 0;
 
 	rcu_read_lock();
 
@@ -8160,6 +8214,9 @@ long sched_setaffinity(pid_t pid, const struct cpumask *in_mask)
 		rcu_read_unlock();
 	}
 
+	trace_android_vh_sched_setaffinity_early(p, in_mask, &skip);
+	if (skip)
+		goto out_put_task;
 	retval = security_task_setscheduler(p);
 	if (retval)
 		goto out_put_task;
@@ -8855,7 +8912,7 @@ int cpuset_cpumask_can_shrink(const struct cpumask *cur,
 }
 
 int task_can_attach(struct task_struct *p,
-		    const struct cpumask *cs_cpus_allowed)
+		    const struct cpumask *cs_effective_cpus)
 {
 	int ret = 0;
 
@@ -8874,8 +8931,13 @@ int task_can_attach(struct task_struct *p,
 	}
 
 	if (dl_task(p) && !cpumask_intersects(task_rq(p)->rd->span,
-					      cs_cpus_allowed))
-		ret = dl_task_can_attach(p, cs_cpus_allowed);
+					      cs_effective_cpus)) {
+		int cpu = cpumask_any_and(cpu_active_mask, cs_effective_cpus);
+
+		if (unlikely(cpu >= nr_cpu_ids))
+			return -EINVAL;
+		ret = dl_cpu_busy(cpu, p);
+	}
 
 out:
 	return ret;
@@ -9177,8 +9239,10 @@ static void cpuset_cpu_active(void)
 static int cpuset_cpu_inactive(unsigned int cpu)
 {
 	if (!cpuhp_tasks_frozen) {
-		if (dl_cpu_busy(cpu))
-			return -EBUSY;
+		int ret = dl_cpu_busy(cpu, NULL);
+
+		if (ret)
+			return ret;
 		cpuset_update_active_cpus();
 	} else {
 		num_cpus_frozen++;
