@@ -21,9 +21,6 @@ cd /mnt
 make headers_install INSTALL_HDR_PATH=/usr
 echo "grep FUTEX_32"
 grep FUTEX_32 /usr/include/linux/futex.h
-apt-get update && apt-get install -y elfutils libunwind-dev binutils numactl libaudit-dev coreutils libelf-dev libzstd-dev libcap-dev
-apt-get update && apt-get install -y flex bison build-essential 
-apt-get update && apt-get install -y --fix-missing libiberty-dev libbabeltrace-ctf-dev libperl-dev libslang2-dev libssl-dev systemtap-sdt-dev libdw-dev
 cd /mnt/tools/perf/ && make
 
 echo -e "\t\t\t\t Completed perf benchmark build" 
