@@ -28,7 +28,7 @@ kernel build:
     - cp -v arch/x86/boot/bzImage .
     - cp .config kernel_config
     # download rootfs
-    - 'curl -L --header "PRIVATE-TOKEN: 2HUDR583zAq2ym4Pfm4x" "$ROOTFS_IMAGE_URL" --output artifact.zip'
+    - 'curl -L --header "PRIVATE-TOKEN: ${KERNEL_RESEARCH_ROOTFS_TOKEN}" "${ROOTFS_IMAGE_URL}" --output artifact.zip'
     - unzip artifact.zip
     - qemu-system-x86_64 -enable-kvm -nographic -kernel ${KERNEL} -drive file=${ROOTFS_NAME},format=raw -device virtio-serial-pci -virtfs local,path=$(pwd),mount_tag=steamlogs,security_model=none -m 2G -smp 2 -cpu host -net user,hostfwd=tcp::2222-:22 -net nic,model=virtio --append "root=/dev/sda rw console=ttyS0" &
     - QEMU_PID=$!
