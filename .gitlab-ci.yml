@@ -19,7 +19,7 @@ kernel build:
     - autoscaled
   before_script:
     - apt-get update -y
-    - apt-get install -y rsync git build-essential bc kmod cpio flex libncurses5-dev bison libssl-dev libelf-dev openssh-client curl qemu-system* unzip python3
+    - apt-get install -y rsync git build-essential bc kmod cpio flex libncurses5-dev bison libssl-dev libelf-dev openssh-client curl qemu-system* unzip python3 zstd
   script:
     - make x86_64_defconfig && make kvm_guest.config
     - ./scripts/kconfig/merge_config.sh .config .config-fragment
