@@ -1,0 +1,6 @@
+obj-$(CONFIG_MISC_IPTS) += ithc.o
+
+ithc-objs := ithc-main.o ithc-regs.o ithc-dma.o ithc-api.o ithc-debug.o
+
+ccflags-y := -std=gnu11 -Wno-declaration-after-statement
+

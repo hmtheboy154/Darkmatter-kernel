@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-config MISC_IPTS
-	tristate "Intel Precise Touch & Stylus"
+config MISC_ITHC
+	tristate "Intel Touch Host Controller"
 	depends on INTEL_MEI
+	depends on HID
 	help
-	  Say Y here if your system has a touchscreen using Intels
-	  Precise Touch & Stylus (IPTS) technology.
+	  Say Y here if your system has a touchscreen using Intel
+	  Touch Host Controller (ITHC) technology.
 
 	  If unsure say N.
 
@@ -15,3 +16,4 @@ config MISC_IPTS
 	  Building this driver alone will not give you a working touchscreen.
 	  It only exposed a userspace API that can be used by a daemon to
 	  receive and process data from the touchscreen hardware.
+
