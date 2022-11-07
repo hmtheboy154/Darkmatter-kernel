@@ -37,7 +37,7 @@ kernel build:
         "CONFIG_EXTRA_FIRMWARE=\"${FW_FILES}\"" &> .config-fragment-firmware
     # Prepare kernel config
     - make x86_64_defconfig && make kvm_guest.config
-    - ./scripts/kconfig/merge_config.sh .config .config-fragment .config-fragment-firmware
+    - ./scripts/kconfig/merge_config.sh .config .config-fragment .config-fragment-extra .config-fragment-firmware
     - cp .config kernel_config
     # Build kernel
     - make -j $(nproc)
