@@ -691,8 +691,6 @@ static void steam_lizard_mode_heartbeat(struct work_struct *work)
 {
 	struct steam_device *steam = container_of(work, struct steam_device,
 							heartbeat.work);
-	if (lizard_mode)
-		return;
 
 	mutex_lock(&steam->mutex);
 	if (!steam->client_opened) {
@@ -899,6 +897,7 @@ hid_hw_start_fail:
 	hid_destroy_device(steam->client_hdev);
 client_hdev_fail:
 	cancel_work_sync(&steam->work_connect);
+	cancel_delayed_work_sync(&steam->heartbeat);
 steam_alloc_fail:
 	hid_err(hdev, "%s: failed with error %d\n",
 			__func__, ret);
