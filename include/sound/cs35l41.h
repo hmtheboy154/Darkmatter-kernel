@@ -678,6 +678,8 @@
 #define CS35L36_PUP_DONE_IRQ_UNMASK	0x5F
 #define CS35L36_PUP_DONE_IRQ_MASK	0xBF
 
+#define CS35L41_SYNC_EN_MASK		(1 << 8)
+
 #define CS35L41_AMP_SHORT_ERR		0x80000000
 #define CS35L41_BST_SHORT_ERR		0x0100
 #define CS35L41_TEMP_WARN		0x8000
@@ -686,6 +688,7 @@
 #define CS35L41_BST_DCM_UVP_ERR		0x80
 #define CS35L41_OTP_BOOT_DONE		0x02
 #define CS35L41_PLL_UNLOCK		0x10
+#define CS35L41_PLL_LOCK		0x02
 #define CS35L41_OTP_BOOT_ERR		0x80000000
 
 #define CS35L41_AMP_SHORT_ERR_RLS	0x02
@@ -705,6 +708,8 @@
 #define CS35L41_INT1_MASK_DEFAULT	0x7FFCFE3F
 #define CS35L41_INT1_UNMASK_PUP		0xFEFFFFFF
 #define CS35L41_INT1_UNMASK_PDN		0xFF7FFFFF
+#define CS35L41_INT3_MASK_DEFAULT	0xFFFF87FF
+#define CS35L41_INT3_UNMASK_PLL_LOCK	0xFFFF87FD
 
 #define CS35L41_GPIO_DIR_MASK		0x80000000
 #define CS35L41_GPIO_DIR_SHIFT		31
@@ -743,6 +748,12 @@ enum cs35l41_boost_type {
 	CS35L41_INT_BOOST,
 	CS35L41_EXT_BOOST,
 	CS35L41_EXT_BOOST_NO_VSPK_SWITCH,
+};
+
+enum cs35l41_shared_boost {
+    SHARED_BOOST_DISABLED,
+    SHARED_BOOST_ACTIVE,
+    SHARED_BOOST_PASSIVE,
 };
 
 enum cs35l41_clk_ids {
@@ -789,6 +800,7 @@ struct cs35l41_hw_cfg {
 	unsigned int spk_pos;
 
 	enum cs35l41_boost_type bst_type;
+	enum cs35l41_shared_boost shared_boost;
 };
 
 struct cs35l41_otp_packed_element_t {
