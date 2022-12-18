@@ -3,12 +3,27 @@
 MODULE_DESCRIPTION("Intel Touch Host Controller driver");
 MODULE_LICENSE("Dual BSD/GPL");
 
+// Lakefield
 #define PCI_DEVICE_ID_INTEL_THC_LKF_PORT1    0x98d0
 #define PCI_DEVICE_ID_INTEL_THC_LKF_PORT2    0x98d1
+// Tiger Lake
 #define PCI_DEVICE_ID_INTEL_THC_TGL_LP_PORT1 0xa0d0
 #define PCI_DEVICE_ID_INTEL_THC_TGL_LP_PORT2 0xa0d1
 #define PCI_DEVICE_ID_INTEL_THC_TGL_H_PORT1  0x43d0
 #define PCI_DEVICE_ID_INTEL_THC_TGL_H_PORT2  0x43d1
+// Alder Lake
+#define PCI_DEVICE_ID_INTEL_THC_ADL_S_PORT1  0x7ad8
+#define PCI_DEVICE_ID_INTEL_THC_ADL_S_PORT2  0x7ad9
+#define PCI_DEVICE_ID_INTEL_THC_ADL_P_PORT1  0x51d0
+#define PCI_DEVICE_ID_INTEL_THC_ADL_P_PORT2  0x51d1
+#define PCI_DEVICE_ID_INTEL_THC_ADL_M_PORT1  0x54d0
+#define PCI_DEVICE_ID_INTEL_THC_ADL_M_PORT2  0x54d1
+// Raptor Lake
+#define PCI_DEVICE_ID_INTEL_THC_RPL_S_PORT1  0x7a58
+#define PCI_DEVICE_ID_INTEL_THC_RPL_S_PORT2  0x7a59
+// Meteor Lake
+#define PCI_DEVICE_ID_INTEL_THC_MTL_PORT1    0x7e48
+#define PCI_DEVICE_ID_INTEL_THC_MTL_PORT2    0x7e4a
 
 static const struct pci_device_id ithc_pci_tbl[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_LKF_PORT1) },
@@ -17,6 +32,16 @@ static const struct pci_device_id ithc_pci_tbl[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_TGL_LP_PORT2) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_TGL_H_PORT1) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_TGL_H_PORT2) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_ADL_S_PORT1) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_ADL_S_PORT2) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_ADL_P_PORT1) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_ADL_P_PORT2) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_ADL_M_PORT1) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_ADL_M_PORT2) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_RPL_S_PORT1) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_RPL_S_PORT2) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_MTL_PORT1) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_THC_MTL_PORT2) },
 	{}
 };
 MODULE_DEVICE_TABLE(pci, ithc_pci_tbl);
@@ -293,7 +318,7 @@ static int ithc_poll_thread(void *arg) {
 
 static void ithc_disable(struct ithc *ithc) {
 	bitsl_set(&ithc->regs->control_bits, CONTROL_QUIESCE);
-	waitl(ithc, &ithc->regs->control_bits, CONTROL_IS_QUIESCED, CONTROL_IS_QUIESCED);
+	CHECK(waitl, ithc, &ithc->regs->control_bits, CONTROL_IS_QUIESCED, CONTROL_IS_QUIESCED);
 	bitsl(&ithc->regs->control_bits, CONTROL_NRESET, 0);
 	bitsb(&ithc->regs->spi_cmd.control, SPI_CMD_CONTROL_SEND, 0);
 	bitsb(&ithc->regs->dma_tx.control, DMA_TX_CONTROL_SEND, 0);
@@ -393,8 +418,18 @@ static void ithc_stop(void *res) {
 	pci_dbg(ithc->pci, "stopped\n");
 }
 
-static int ithc_probe(struct pci_dev *pci, const struct pci_device_id *id) {
+static void ithc_clear_drvdata(void *res) {
+	struct pci_dev *pci = res;
+	pci_set_drvdata(pci, NULL);
+}
+
+static int ithc_start(struct pci_dev *pci) {
 	pci_dbg(pci, "starting\n");
+	if (pci_get_drvdata(pci)) {
+		pci_err(pci, "device already initialized\n");
+		return -EINVAL;
+	}
+	if (!devres_open_group(&pci->dev, ithc_start, GFP_KERNEL)) return -ENOMEM;
 
 	struct ithc *ithc = devm_kzalloc(&pci->dev, sizeof *ithc, GFP_KERNEL);
 	if (!ithc) return -ENOMEM;
@@ -405,6 +440,7 @@ static int ithc_probe(struct pci_dev *pci, const struct pci_device_id *id) {
 	init_waitqueue_head(&ithc->wait_hid_get_feature);
 	mutex_init(&ithc->hid_get_feature_mutex);
 	pci_set_drvdata(pci, ithc);
+	CHECK_RET(devm_add_action_or_reset, &pci->dev, ithc_clear_drvdata, pci);
 	if (ithc_log_regs_enabled) ithc->prev_regs = devm_kzalloc(&pci->dev, sizeof *ithc->prev_regs, GFP_KERNEL);
 
 	CHECK_RET(pcim_enable_device, pci);
@@ -460,8 +496,46 @@ static int ithc_probe(struct pci_dev *pci, const struct pci_device_id *id) {
 	return 0;
 }
 
-void ithc_remove(struct pci_dev *dev) {
+static int ithc_probe(struct pci_dev *pci, const struct pci_device_id *id) {
+	pci_dbg(pci, "device probe\n");
+	return ithc_start(pci);
+}
+
+static void ithc_remove(struct pci_dev *pci) {
+	pci_dbg(pci, "device remove\n");
 	// all cleanup is handled by devres
+}
+
+static int ithc_suspend(struct device *dev) {
+	struct pci_dev *pci = to_pci_dev(dev);
+	pci_dbg(pci, "pm suspend\n");
+	devres_release_group(dev, ithc_start);
+	return 0;
+}
+
+static int ithc_resume(struct device *dev) {
+	struct pci_dev *pci = to_pci_dev(dev);
+	pci_dbg(pci, "pm resume\n");
+	return ithc_start(pci);
+}
+
+static int ithc_freeze(struct device *dev) {
+	struct pci_dev *pci = to_pci_dev(dev);
+	pci_dbg(pci, "pm freeze\n");
+	devres_release_group(dev, ithc_start);
+	return 0;
+}
+
+static int ithc_thaw(struct device *dev) {
+	struct pci_dev *pci = to_pci_dev(dev);
+	pci_dbg(pci, "pm thaw\n");
+	return ithc_start(pci);
+}
+
+static int ithc_restore(struct device *dev) {
+	struct pci_dev *pci = to_pci_dev(dev);
+	pci_dbg(pci, "pm restore\n");
+	return ithc_start(pci);
 }
 
 static struct pci_driver ithc_driver = {
@@ -469,6 +543,13 @@ static struct pci_driver ithc_driver = {
 	.id_table = ithc_pci_tbl,
 	.probe = ithc_probe,
 	.remove = ithc_remove,
+	.driver.pm = &(const struct dev_pm_ops) {
+		.suspend = ithc_suspend,
+		.resume = ithc_resume,
+		.freeze = ithc_freeze,
+		.thaw = ithc_thaw,
+		.restore = ithc_restore,
+	},
 	//.dev_groups = ithc_attribute_groups, // could use this (since 5.14), however the attributes won't have valid values until config has been read anyway
 };
 
