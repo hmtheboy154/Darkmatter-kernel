@@ -9,9 +9,11 @@
 #ifndef IPTS_CONTEXT_H
 #define IPTS_CONTEXT_H
 
+#include <linux/completion.h>
 #include <linux/device.h>
 #include <linux/hid.h>
 #include <linux/mei_cl_bus.h>
+#include <linux/mutex.h>
 #include <linux/sched.h>
 #include <linux/types.h>
 
@@ -23,10 +25,16 @@ struct ipts_context {
 	struct mei_cl_device *cldev;
 
 	enum ipts_mode mode;
-	u8 *get_feature_report;
 
-	u8 *descriptor;
-	size_t desc_size;
+	struct mutex feature_lock;
+	struct completion feature_event;
+
+	/*
+	 * These are not inside of struct ipts_resources
+	 * because they don't own the memory they point to.
+	 */
+	struct ipts_buffer feature_report;
+	struct ipts_buffer descriptor;
 
 	struct hid_device *hid;
 	struct ipts_device_info info;
