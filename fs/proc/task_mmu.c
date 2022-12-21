@@ -1118,10 +1118,12 @@ static inline bool clear_soft_dirty(struct vm_area_struct *vma,
 		ret = pte_soft_dirty(old_pte);
 		ptent = pte_wrprotect(old_pte);
 		ptent = pte_clear_soft_dirty(ptent);
+		ptent = pte_mkuffd_wp(ptent);
 		ptep_modify_prot_commit(vma, addr, pte, old_pte, ptent);
 	} else if (is_swap_pte(ptent)) {
 		ret = pte_swp_soft_dirty(ptent);
 		ptent = pte_swp_clear_soft_dirty(ptent);
+		ptent = pte_swp_mkuffd_wp(ptent);
 		set_pte_at(vma->vm_mm, addr, pte, ptent);
 	}
     return ret;
@@ -1516,14 +1518,10 @@ static pagemap_entry_t pte_to_pagemap_entry(struct pagemapread *pm,
 		page = vm_normal_page(vma, addr, pte);
 		if (pte_soft_dirty(pte))
 			flags |= PM_SOFT_DIRTY | PM_SOFT_DIRTY_PAGE;
-		if (pte_uffd_wp(pte))
-			flags |= PM_UFFD_WP;
 	} else if (is_swap_pte(pte)) {
 		swp_entry_t entry;
 		if (pte_swp_soft_dirty(pte))
 			flags |= PM_SOFT_DIRTY | PM_SOFT_DIRTY_PAGE;
-		if (pte_swp_uffd_wp(pte))
-			flags |= PM_UFFD_WP;
 		entry = pte_to_swp_entry(pte);
 		if (pm->show_pfn) {
 			pgoff_t offset;
@@ -1542,8 +1540,6 @@ static pagemap_entry_t pte_to_pagemap_entry(struct pagemapread *pm,
 		migration = is_migration_entry(entry);
 		if (is_pfn_swap_entry(entry))
 			page = pfn_swap_entry_to_page(entry);
-		if (pte_marker_entry_uffd_wp(entry))
-			flags |= PM_UFFD_WP;
 	}
 
 	if (page && !PageAnon(page))
@@ -1598,8 +1594,6 @@ static int pagemap_pmd_range(pmd_t *pmdp, unsigned long addr, unsigned long end,
 			flags |= PM_PRESENT;
 			if (pmd_soft_dirty(pmd))
 				flags |= PM_SOFT_DIRTY | PM_SOFT_DIRTY_PAGE;
-			if (pmd_uffd_wp(pmd))
-				flags |= PM_UFFD_WP;
 			if (pm->show_pfn)
 				frame = pmd_pfn(pmd) +
 					((addr & ~PMD_MASK) >> PAGE_SHIFT);
@@ -1622,8 +1616,6 @@ static int pagemap_pmd_range(pmd_t *pmdp, unsigned long addr, unsigned long end,
 			flags |= PM_SWAP;
 			if (pmd_swp_soft_dirty(pmd))
 				flags |= PM_SOFT_DIRTY | PM_SOFT_DIRTY_PAGE;
-			if (pmd_swp_uffd_wp(pmd))
-				flags |= PM_UFFD_WP;
 			VM_BUG_ON(!is_pmd_migration_entry(pmd));
 			migration = is_migration_entry(entry);
 			page = pfn_swap_entry_to_page(entry);
@@ -1710,15 +1702,10 @@ static int pagemap_hugetlb_range(pte_t *ptep, unsigned long hmask,
 		if (page_mapcount(page) == 1)
 			flags |= PM_MMAP_EXCLUSIVE;
 
-		if (huge_pte_uffd_wp(pte))
-			flags |= PM_UFFD_WP;
-
 		flags |= PM_PRESENT;
 		if (pm->show_pfn)
 			frame = pte_pfn(pte) +
 				((addr & ~hmask) >> PAGE_SHIFT);
-	} else if (pte_swp_uffd_wp_any(pte)) {
-		flags |= PM_UFFD_WP;
 	}
 
 	for (; addr != end; addr += PAGE_SIZE) {
