@@ -918,6 +918,17 @@ struct drm_mode_config {
 	bool async_page_flip;
 
 	/**
+	 * @atomic_async_page_flip_not_supported:
+	 *
+	 * If true, the driver does not support async page-flips with the
+	 * atomic uAPI. This is only used by old drivers which haven't yet
+	 * accomodated for &drm_crtc_state.async_flip in their atomic logic,
+	 * even if they have &drm_mode_config.async_page_flip set to true.
+	 * New drivers shall not set this flag.
+	 */
+	bool atomic_async_page_flip_not_supported;
+
+	/**
 	 * @fb_modifiers_not_supported:
 	 *
 	 * When this flag is set, the DRM device will not expose modifier
