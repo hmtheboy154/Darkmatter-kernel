@@ -111,78 +111,26 @@ int amdgpu_vcn_sw_init(struct amdgpu_device *adev)
 		atomic_set(&adev->vcn.inst[i].dpg_enc_submission_cnt, 0);
 
 	switch (adev->ip_versions[UVD_HWIP][0]) {
-	case IP_VERSION(1, 0, 0):
-	case IP_VERSION(1, 0, 1):
-	case IP_VERSION(2, 5, 0):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
-	case IP_VERSION(2, 2, 0):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
-	case IP_VERSION(2, 6, 0):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
-	case IP_VERSION(2, 0, 0):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
-	case IP_VERSION(2, 0, 2):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
-	case IP_VERSION(3, 0, 0):
-	case IP_VERSION(3, 0, 64):
-	case IP_VERSION(3, 0, 192):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
-	case IP_VERSION(3, 0, 2):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
-	case IP_VERSION(3, 0, 16):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
-	case IP_VERSION(3, 0, 33):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
-	case IP_VERSION(3, 1, 1):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
+	case IP_VERSION(1, 0, 0):	/* Raven (1/2) / Picasso */
+	case IP_VERSION(1, 0, 1):	/* Raven (1/2) / Picasso */
+	case IP_VERSION(2, 0, 0):	/* Navi10 */
+	case IP_VERSION(2, 0, 2):	/* Navi12 / Navi14 */
+	case IP_VERSION(2, 2, 0):	/* Renoir / Green Sardine */
+	case IP_VERSION(2, 5, 0):	/* Arcturus */
+	case IP_VERSION(2, 6, 0):	/* Aldebaran */
+	case IP_VERSION(3, 0, 0):	/* Sienna Cichlid / Navy Flounder */
+	case IP_VERSION(3, 0, 2):	/* Vangogh */
+	case IP_VERSION(3, 0, 64):	/* Sienna Cichlid / Navy Flounder */
+	case IP_VERSION(3, 0, 16):	/* Dimgray Cavefish */
+	case IP_VERSION(3, 0, 33):	/* Beige Goby */
+	case IP_VERSION(3, 0, 192):	/* Sienna Cichlid / Navy Flounder */
+	case IP_VERSION(3, 1, 1):	/* Yellow Carp */
 	case IP_VERSION(3, 1, 2):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
-	case IP_VERSION(4, 0, 0):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-			(adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
+	case IP_VERSION(4, 0, 0):	/* Vega10 */
 	case IP_VERSION(4, 0, 2):
-		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-			(adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
-			adev->vcn.indirect_sram = true;
-		break;
 	case IP_VERSION(4, 0, 4):
 		if ((adev->firmware.load_type == AMDGPU_FW_LOAD_PSP) &&
-			(adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
+		    (adev->pg_flags & AMD_PG_SUPPORT_VCN_DPG))
 			adev->vcn.indirect_sram = true;
 		break;
 	default:
