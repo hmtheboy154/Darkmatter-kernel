@@ -139,6 +139,16 @@ int amdgpu_vcn_sw_init(struct amdgpu_device *adev)
 
 	if (amdgpu_indirect_sram >= 0)
 		adev->vcn.indirect_sram = (bool)amdgpu_indirect_sram;
+	else {
+		/*
+		 * Steam Deck workaround - force indirect SRAM off if the
+		 * parameter is not set. See jupiter/linux-integration#21 for
+		 * more information.
+		 */
+		adev->vcn.indirect_sram = false;
+		amdgpu_indirect_sram = 0;
+		dev_warn(adev->dev, "Steam Deck WORKAROUND: indirect SRAM forced off (use amdgpu.indirect_sram=1 to override)\n");
+	}
 
 	hdr = (const struct common_firmware_header *)adev->vcn.fw->data;
 	adev->vcn.fw_version = le32_to_cpu(hdr->ucode_version);
