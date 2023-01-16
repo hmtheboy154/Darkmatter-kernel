@@ -137,6 +137,9 @@ int amdgpu_vcn_sw_init(struct amdgpu_device *adev)
 		return -EINVAL;
 	}
 
+	if (amdgpu_indirect_sram >= 0)
+		adev->vcn.indirect_sram = (bool)amdgpu_indirect_sram;
+
 	hdr = (const struct common_firmware_header *)adev->vcn.fw->data;
 	adev->vcn.fw_version = le32_to_cpu(hdr->ucode_version);
 
