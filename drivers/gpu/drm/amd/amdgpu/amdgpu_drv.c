@@ -187,6 +187,7 @@ int amdgpu_num_kcq = -1;
 int amdgpu_smartshift_bias;
 int amdgpu_use_xgmi_p2p = 1;
 int amdgpu_vcnfw_log;
+int amdgpu_indirect_sram = -1;
 
 static void amdgpu_drv_delayed_reset_work_handler(struct work_struct *work);
 
@@ -940,6 +941,14 @@ module_param_named(vcnfw_log, amdgpu_vcnfw_log, int, 0444);
 MODULE_PARM_DESC(smu_pptable_id,
 	"specify pptable id to be used (-1 = auto(default) value, 0 = use pptable from vbios, > 0 = soft pptable id)");
 module_param_named(smu_pptable_id, amdgpu_smu_pptable_id, int, 0444);
+
+/**
+ * DOC: indirect_sram (int)
+ * Allow users to force using (or not) the VCN indirect SRAM mode in the fw load
+ * code. Default is -1, meaning auto (aka, don't mess with driver's behavior).
+ */
+MODULE_PARM_DESC(indirect_sram, "Force VCN indirect SRAM (-1 = auto (default), 0 = disabled, 1 = enabled)");
+module_param_named(indirect_sram, amdgpu_indirect_sram, int, 0444);
 
 /* These devices are not supported by amdgpu.
  * They are supported by the mach64, r128, radeon drivers
