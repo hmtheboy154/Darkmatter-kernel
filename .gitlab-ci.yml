@@ -1,0 +1,66 @@
+variables:
+  DOCKER_DRIVER: overlay2
+  KERNEL: "bzImage"
+  LINUX_FIRMWARE_URL: "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+  LINUX_FIRMWARE_DL_DIR: "dl/linux-firmware"
+  ROOTFS_NAME: "stretch.img"
+  ROOTFS_IMAGE_URL: "https://gitlab.steamos.cloud/api/v4/projects/kernel-research%2Frootfs/jobs/128684/artifacts"
+  GIT_AUTHOR_NAME: "Gitlab-ci"
+  GIT_AUTHOR_EMAIL: "gitlab@gitlab.steamos.cloud"
+  TAG: CI_${CI_PIPELINE_ID}_${CI_COMMIT_SHORT_SHA}
+
+before_script:
+  - apt-get update -y
+
+stages:
+  - build
+
+kernel build:
+  stage: build
+  tags:
+    - autoscaled
+
+  before_script:
+    - apt-get update -y
+    - apt-get install -y rsync git build-essential bc kmod cpio flex libncurses5-dev bison libssl-dev libelf-dev openssh-client curl qemu-system* unzip python3 zstd
+
+  script:
+    # Prepare the firmware files to be included in the kernel image
+    - git clone --depth=1 ${LINUX_FIRMWARE_URL} ${LINUX_FIRMWARE_DL_DIR}
+    - |
+      FW_FILES="amdgpu/vangogh_asd.bin amdgpu/vangogh_ce.bin amdgpu/vangogh_dmcub.bin amdgpu/vangogh_me.bin amdgpu/vangogh_mec2.bin amdgpu/vangogh_mec.bin amdgpu/vangogh_pfp.bin amdgpu/vangogh_rlc.bin amdgpu/vangogh_sdma.bin amdgpu/vangogh_toc.bin amdgpu/vangogh_vcn.bin" &&
+      FW_FILES="${FW_FILES} rtw88/rtw8822c_fw.bin rtw88/rtw8822c_wow_fw.bin" &&
+      FW_FILES="${FW_FILES} rtl_bt/rtl8822cu_fw.bin rtl_bt/rtl8822cu_config.bin" &&
+      FW_FILES="${FW_FILES} cirrus/cs35l41-dsp1-spk-prot.wmfw cirrus/cs35l41-dsp1-spk-prot.bin" &&
+      printf "%s\n" \
+        "CONFIG_EXTRA_FIRMWARE_DIR=\"${LINUX_FIRMWARE_DL_DIR}\"" \
+        "CONFIG_EXTRA_FIRMWARE=\"${FW_FILES}\"" &> .config-fragment-firmware
+    # Prepare kernel config
+    - make x86_64_defconfig && make kvm_guest.config
+    - ./scripts/kconfig/merge_config.sh .config .config-fragment .config-fragment-extra .config-fragment-firmware
+    - cp .config kernel_config
+    # Build kernel
+    - make -j $(nproc)
+    - git rev-parse HEAD &> commit_id_file
+    - cp -v arch/x86/boot/bzImage .
+    # Download rootfs
+    - 'curl -L --header "PRIVATE-TOKEN: ${KERNEL_RESEARCH_ROOTFS_TOKEN}" "${ROOTFS_IMAGE_URL}" --output artifact.zip'
+    - unzip artifact.zip
+    # Start QEMU
+    - qemu-system-x86_64 -enable-kvm -nographic -kernel ${KERNEL} -drive file=${ROOTFS_NAME},format=raw -device virtio-serial-pci -virtfs local,path=$(pwd),mount_tag=steamlogs,security_model=none -m 2G -smp $(nproc --ignore=1) -cpu host -net user,hostfwd=tcp::2222-:22 -net nic,model=virtio --append "root=/dev/sda rw console=ttyS0" &
+    - QEMU_PID=$!
+    - echo "QEMU pid is $QEMU_PID"
+    # Dump kernel test results
+    - sleep 90
+    - tail --pid=$QEMU_PID -f kernel_results.log
+    # Notify
+    - test -f "fail.txt" && exit 1
+    - echo "All tests passed."
+
+  artifacts:
+    expire_in: 1 week
+    when: always
+    paths:
+      - bzImage
+      - kernel_config
+      - kernel_results.log
