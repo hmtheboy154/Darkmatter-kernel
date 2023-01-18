@@ -54,7 +54,7 @@ static inline bool can_change_pte_writable(struct vm_area_struct *vma,
 		return false;
 
 	/* Do we need write faults for uffd-wp tracking? */
-	if (userfaultfd_pte_wp(vma, pte))
+	if (pte_uffd_wp(pte))
 		return false;
 
 	if (!(vma->vm_flags & VM_SHARED)) {
