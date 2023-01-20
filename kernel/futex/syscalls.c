@@ -449,4 +449,3 @@ SYSCALL_DEFINE6(futex_time32, u32 __user *, uaddr, int, op, u32, val,
 	return do_futex(uaddr, op, val, tp, uaddr2, (unsigned long)utime, val3);
 }
 #endif /* CONFIG_COMPAT_32BIT_TIME */
-

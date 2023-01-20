@@ -127,6 +127,9 @@ static void vblank_control_worker(struct work_struct *work)
 				amdgpu_dm_psr_disable(vblank_work->stream);
 		} else if (vblank_work->stream->link->psr_settings.psr_feature_enabled &&
 			   !vblank_work->stream->link->psr_settings.psr_allow_active &&
+#ifdef CONFIG_DRM_AMD_SECURE_DISPLAY
+			   !amdgpu_dm_crc_window_is_activated(&vblank_work->acrtc->base) &&
+#endif
 			   vblank_work->acrtc->dm_irq_params.allow_psr_entry) {
 			amdgpu_dm_psr_enable(vblank_work->stream);
 		}
@@ -388,6 +391,16 @@ static int dm_crtc_helper_atomic_check(struct drm_crtc *crtc,
 		return -EINVAL;
 	}
 
+	/* Only allow async flips for fast updates that don't change the FB
+	 * pitch, the DCC state, rotation, etc. */
+	if (crtc_state->async_flip &&
+	    dm_crtc_state->update_type != UPDATE_TYPE_FAST) {
+		drm_dbg_atomic(crtc->dev,
+			       "[CRTC:%d:%s] async flips are only supported for fast updates\n",
+			       crtc->base.id, crtc->name);
+		return -EINVAL;
+	}
+
 	/* In some use cases, like reset, no stream is attached */
 	if (!dm_crtc_state->stream)
 		return 0;
@@ -457,6 +470,11 @@ int amdgpu_dm_crtc_init(struct amdgpu_display_manager *dm,
 	is_dcn = dm->adev->dm.dc->caps.color.dpp.dcn_arch;
 	drm_crtc_enable_color_mgmt(&acrtc->base, is_dcn ? MAX_COLOR_LUT_ENTRIES : 0,
 				   true, MAX_COLOR_LUT_ENTRIES);
+
+	if (dm->dc->caps.color.mpc.num_3dluts)
+		drm_crtc_enable_lut3d(&acrtc->base,
+				      MAX_COLOR_LUT_ENTRIES,
+				      MAX_COLOR_3DLUT_ENTRIES);
 
 	drm_mode_crtc_set_gamma_size(&acrtc->base, MAX_COLOR_LEGACY_LUT_ENTRIES);
 

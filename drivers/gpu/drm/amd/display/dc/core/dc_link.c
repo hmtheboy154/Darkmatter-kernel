@@ -755,14 +755,14 @@ static bool is_same_edid(struct dc_edid *old_edid, struct dc_edid *new_edid)
 		       new_edid->raw_edid, new_edid->length) == 0);
 }
 
-static bool wait_for_entering_dp_alt_mode(struct dc_link *link)
+bool wait_for_entering_dp_alt_mode(struct dc_link *link)
 {
 	/**
 	 * something is terribly wrong if time out is > 200ms. (5Hz)
 	 * 500 microseconds * 400 tries us 200 ms
 	 **/
 	unsigned int sleep_time_in_microseconds = 500;
-	unsigned int tries_allowed = 400;
+	unsigned int tries_allowed = 1000;
 	bool is_in_alt_mode;
 	unsigned long long enter_timestamp;
 	unsigned long long finish_timestamp;
@@ -773,6 +773,11 @@ static bool wait_for_entering_dp_alt_mode(struct dc_link *link)
 
 	if (!link->link_enc->funcs->is_in_alt_mode)
 		return true;
+
+	if (link->mst_dpcd_fail_on_resume) {
+		tries_allowed = 3000;
+		link->mst_dpcd_fail_on_resume = false;
+	}
 
 	is_in_alt_mode = link->link_enc->funcs->is_in_alt_mode(link->link_enc);
 	DC_LOG_WARNING("DP Alt mode state on HPD: %d\n", is_in_alt_mode);
@@ -1085,8 +1090,6 @@ static bool detect_link_and_local_sink(struct dc_link *link,
 		}
 
 		case SIGNAL_TYPE_EDP: {
-			read_current_link_settings_on_detect(link);
-
 			detect_edp_sink_caps(link);
 			read_current_link_settings_on_detect(link);
 
@@ -1915,12 +1918,6 @@ struct dc_link *link_create(const struct link_init_data *init_params)
 
 	if (false == dc_link_construct(link, init_params))
 		goto construct_fail;
-
-	/*
-	 * Must use preferred_link_setting, not reported_link_cap or verified_link_cap,
-	 * since struct preferred_link_setting won't be reset after S3.
-	 */
-	link->preferred_link_setting.dpcd_source_device_specific_field_support = true;
 
 	return link;
 
@@ -3378,7 +3375,7 @@ bool dc_link_setup_psr(struct dc_link *link,
 		case FAMILY_YELLOW_CARP:
 		case AMDGPU_FAMILY_GC_10_3_6:
 		case AMDGPU_FAMILY_GC_11_0_1:
-			if (dc->debug.disable_z10)
+			if (dc->debug.disable_z10 || dc->debug.psr_skip_crtc_disable)
 				psr_context->psr_level.bits.SKIP_CRTC_DISABLE = true;
 			break;
 		default:
@@ -4229,6 +4226,7 @@ static void fpga_dp_hpo_enable_link_and_stream(struct dc_state *state, struct pi
 		link_hwss->ext.set_throttled_vcp_size(pipe_ctx, avg_time_slots_per_mtp);
 
 	dc->hwss.unblank_stream(pipe_ctx, &stream->link->cur_link_settings);
+	dc->hwss.enable_audio_stream(pipe_ctx);
 }
 
 void core_link_enable_stream(
@@ -4308,10 +4306,7 @@ void core_link_enable_stream(
 			/* Still enable stream features & audio on seamless boot for DP external displays */
 			if (pipe_ctx->stream->signal == SIGNAL_TYPE_DISPLAY_PORT) {
 				enable_stream_features(pipe_ctx);
-				if (pipe_ctx->stream_res.audio != NULL) {
-					pipe_ctx->stream_res.stream_enc->funcs->dp_audio_enable(pipe_ctx->stream_res.stream_enc);
-					dc->hwss.enable_audio_stream(pipe_ctx);
-				}
+				dc->hwss.enable_audio_stream(pipe_ctx);
 			}
 
 #if defined(CONFIG_DRM_AMD_DC_HDCP)
@@ -4657,13 +4652,14 @@ void dc_link_set_preferred_training_settings(struct dc *dc,
 
 	if (link_setting != NULL) {
 		link->preferred_link_setting = *link_setting;
-		if (dp_get_link_encoding_format(link_setting) == DP_128b_132b_ENCODING)
-			/* TODO: add dc update for acquiring link res  */
-			skip_immediate_retrain = true;
 	} else {
 		link->preferred_link_setting.lane_count = LANE_COUNT_UNKNOWN;
 		link->preferred_link_setting.link_rate = LINK_RATE_UNKNOWN;
 	}
+
+	if (link->connector_signal == SIGNAL_TYPE_DISPLAY_PORT &&
+			link->type == dc_connection_mst_branch)
+		dm_helpers_dp_mst_update_branch_bandwidth(dc->ctx, link);
 
 	/* Retrain now, or wait until next stream update to apply */
 	if (skip_immediate_retrain == false)

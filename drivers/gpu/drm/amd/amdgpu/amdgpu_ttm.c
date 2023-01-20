@@ -58,6 +58,7 @@
 #include "amdgpu_amdkfd.h"
 #include "amdgpu_sdma.h"
 #include "amdgpu_ras.h"
+#include "amdgpu_hmm.h"
 #include "amdgpu_atomfirmware.h"
 #include "amdgpu_res_cursor.h"
 #include "bif/bif_4_1_d.h"
@@ -691,9 +692,8 @@ int amdgpu_ttm_tt_get_user_pages(struct amdgpu_bo *bo, struct page **pages,
 	}
 
 	readonly = amdgpu_ttm_tt_is_readonly(ttm);
-	r = amdgpu_hmm_range_get_pages(&bo->notifier, mm, pages, start,
-				       ttm->num_pages, range, readonly,
-				       true, NULL);
+	r = amdgpu_hmm_range_get_pages(&bo->notifier, start, ttm->num_pages,
+				       readonly, NULL, pages, range);
 out_unlock:
 	mmap_read_unlock(mm);
 	if (r)
@@ -704,8 +704,19 @@ out_unlock:
 	return r;
 }
 
+/* amdgpu_ttm_tt_discard_user_pages - Discard range and pfn array allocations
+ */
+void amdgpu_ttm_tt_discard_user_pages(struct ttm_tt *ttm,
+				      struct hmm_range *range)
+{
+	struct amdgpu_ttm_tt *gtt = (void *)ttm;
+
+	if (gtt && gtt->userptr && range)
+		amdgpu_hmm_range_get_pages_done(range);
+}
+
 /*
- * amdgpu_ttm_tt_userptr_range_done - stop HMM track the CPU page table change
+ * amdgpu_ttm_tt_get_user_pages_done - stop HMM track the CPU page table change
  * Check if the pages backing this ttm range have been invalidated
  *
  * Returns: true if pages are still valid
@@ -1154,8 +1165,9 @@ int amdgpu_ttm_tt_get_userptr(const struct ttm_buffer_object *tbo,
  * @addr:  The address in the current tasks VM space to use
  * @flags: Requirements of userptr object.
  *
- * Called by amdgpu_gem_userptr_ioctl() to bind userptr pages
- * to current task
+ * Called by amdgpu_gem_userptr_ioctl() and kfd_ioctl_alloc_memory_of_gpu() to
+ * bind userptr pages to current task and by kfd_ioctl_acquire_vm() to
+ * initialize GPU VM for a KFD process.
  */
 int amdgpu_ttm_tt_set_userptr(struct ttm_buffer_object *bo,
 			      uint64_t addr, uint32_t flags)
@@ -1537,6 +1549,23 @@ static void amdgpu_ttm_fw_reserve_vram_fini(struct amdgpu_device *adev)
 		NULL, &adev->mman.fw_vram_usage_va);
 }
 
+/*
+ * Driver Reservation functions
+ */
+/**
+ * amdgpu_ttm_drv_reserve_vram_fini - free drv reserved vram
+ *
+ * @adev: amdgpu_device pointer
+ *
+ * free drv reserved vram if it has been reserved.
+ */
+static void amdgpu_ttm_drv_reserve_vram_fini(struct amdgpu_device *adev)
+{
+	amdgpu_bo_free_kernel(&adev->mman.drv_vram_usage_reserved_bo,
+						  NULL,
+						  &adev->mman.drv_vram_usage_va);
+}
+
 /**
  * amdgpu_ttm_fw_reserve_vram_init - create bo vram reservation from fw
  *
@@ -1558,9 +1587,33 @@ static int amdgpu_ttm_fw_reserve_vram_init(struct amdgpu_device *adev)
 	return amdgpu_bo_create_kernel_at(adev,
 					  adev->mman.fw_vram_usage_start_offset,
 					  adev->mman.fw_vram_usage_size,
-					  AMDGPU_GEM_DOMAIN_VRAM,
 					  &adev->mman.fw_vram_usage_reserved_bo,
 					  &adev->mman.fw_vram_usage_va);
+}
+
+/**
+ * amdgpu_ttm_drv_reserve_vram_init - create bo vram reservation from driver
+ *
+ * @adev: amdgpu_device pointer
+ *
+ * create bo vram reservation from drv.
+ */
+static int amdgpu_ttm_drv_reserve_vram_init(struct amdgpu_device *adev)
+{
+	u64 vram_size = adev->gmc.visible_vram_size;
+
+	adev->mman.drv_vram_usage_va = NULL;
+	adev->mman.drv_vram_usage_reserved_bo = NULL;
+
+	if (adev->mman.drv_vram_usage_size == 0 ||
+	    adev->mman.drv_vram_usage_size > vram_size)
+		return 0;
+
+	return amdgpu_bo_create_kernel_at(adev,
+					  adev->mman.drv_vram_usage_start_offset,
+					  adev->mman.drv_vram_usage_size,
+					  &adev->mman.drv_vram_usage_reserved_bo,
+					  &adev->mman.drv_vram_usage_va);
 }
 
 /*
@@ -1637,11 +1690,10 @@ static int amdgpu_ttm_reserve_tmr(struct amdgpu_device *adev)
 		/* reserve vram for mem train according to TMR location */
 		amdgpu_ttm_training_data_block_init(adev);
 		ret = amdgpu_bo_create_kernel_at(adev,
-					 ctx->c2p_train_data_offset,
-					 ctx->train_data_size,
-					 AMDGPU_GEM_DOMAIN_VRAM,
-					 &ctx->c2p_bo,
-					 NULL);
+						 ctx->c2p_train_data_offset,
+						 ctx->train_data_size,
+						 &ctx->c2p_bo,
+						 NULL);
 		if (ret) {
 			DRM_ERROR("alloc c2p_bo failed(%d)!\n", ret);
 			amdgpu_ttm_training_reserve_vram_fini(adev);
@@ -1651,11 +1703,10 @@ static int amdgpu_ttm_reserve_tmr(struct amdgpu_device *adev)
 	}
 
 	ret = amdgpu_bo_create_kernel_at(adev,
-				adev->gmc.real_vram_size - adev->mman.discovery_tmr_size,
-				adev->mman.discovery_tmr_size,
-				AMDGPU_GEM_DOMAIN_VRAM,
-				&adev->mman.discovery_memory,
-				NULL);
+					 adev->gmc.real_vram_size - adev->mman.discovery_tmr_size,
+					 adev->mman.discovery_tmr_size,
+					 &adev->mman.discovery_memory,
+					 NULL);
 	if (ret) {
 		DRM_ERROR("alloc tmr failed(%d)!\n", ret);
 		amdgpu_bo_free_kernel(&adev->mman.discovery_memory, NULL, NULL);
@@ -1678,7 +1729,6 @@ int amdgpu_ttm_init(struct amdgpu_device *adev)
 {
 	uint64_t gtt_size;
 	int r;
-	u64 vis_vram_limit;
 
 	mutex_init(&adev->mman.gtt_window_lock);
 
@@ -1700,12 +1750,6 @@ int amdgpu_ttm_init(struct amdgpu_device *adev)
 		DRM_ERROR("Failed initializing VRAM heap.\n");
 		return r;
 	}
-
-	/* Reduce size of CPU-visible VRAM if requested */
-	vis_vram_limit = (u64)amdgpu_vis_vram_limit * 1024 * 1024;
-	if (amdgpu_vis_vram_limit > 0 &&
-	    vis_vram_limit <= adev->gmc.visible_vram_size)
-		adev->gmc.visible_vram_size = vis_vram_limit;
 
 	/* Change the size here instead of the init above so only lpfn is affected */
 	amdgpu_ttm_set_buffer_funcs_status(adev, false);
@@ -1731,6 +1775,14 @@ int amdgpu_ttm_init(struct amdgpu_device *adev)
 	}
 
 	/*
+	 *The reserved vram for driver must be pinned to the specified
+	 *place on the VRAM, so reserve it early.
+	 */
+	r = amdgpu_ttm_drv_reserve_vram_init(adev);
+	if (r)
+		return r;
+
+	/*
 	 * only NAVI10 and onwards ASIC support for IP discovery.
 	 * If IP discovery enabled, a block of memory should be
 	 * reserved for IP discovey.
@@ -1746,21 +1798,18 @@ int amdgpu_ttm_init(struct amdgpu_device *adev)
 	 * avoid display artifacts while transitioning between pre-OS
 	 * and driver.  */
 	r = amdgpu_bo_create_kernel_at(adev, 0, adev->mman.stolen_vga_size,
-				       AMDGPU_GEM_DOMAIN_VRAM,
 				       &adev->mman.stolen_vga_memory,
 				       NULL);
 	if (r)
 		return r;
 	r = amdgpu_bo_create_kernel_at(adev, adev->mman.stolen_vga_size,
 				       adev->mman.stolen_extended_size,
-				       AMDGPU_GEM_DOMAIN_VRAM,
 				       &adev->mman.stolen_extended_memory,
 				       NULL);
 	if (r)
 		return r;
 	r = amdgpu_bo_create_kernel_at(adev, adev->mman.stolen_reserved_offset,
 				       adev->mman.stolen_reserved_size,
-				       AMDGPU_GEM_DOMAIN_VRAM,
 				       &adev->mman.stolen_reserved_memory,
 				       NULL);
 	if (r)
@@ -1855,6 +1904,7 @@ void amdgpu_ttm_fini(struct amdgpu_device *adev)
 	amdgpu_bo_free_kernel(&adev->mman.sdma_access_bo, NULL,
 					&adev->mman.sdma_access_ptr);
 	amdgpu_ttm_fw_reserve_vram_fini(adev);
+	amdgpu_ttm_drv_reserve_vram_fini(adev);
 
 	if (drm_dev_enter(adev_to_drm(adev), &idx)) {
 
@@ -2272,9 +2322,9 @@ static ssize_t amdgpu_iomem_read(struct file *f, char __user *buf,
 		if (p->mapping != adev->mman.bdev.dev_mapping)
 			return -EPERM;
 
-		ptr = kmap(p);
+		ptr = kmap_local_page(p);
 		r = copy_to_user(buf, ptr + off, bytes);
-		kunmap(p);
+		kunmap_local(ptr);
 		if (r)
 			return -EFAULT;
 
@@ -2323,9 +2373,9 @@ static ssize_t amdgpu_iomem_write(struct file *f, const char __user *buf,
 		if (p->mapping != adev->mman.bdev.dev_mapping)
 			return -EPERM;
 
-		ptr = kmap(p);
+		ptr = kmap_local_page(p);
 		r = copy_from_user(ptr + off, buf, bytes);
-		kunmap(p);
+		kunmap_local(ptr);
 		if (r)
 			return -EFAULT;
 

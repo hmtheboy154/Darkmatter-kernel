@@ -430,7 +430,7 @@ static int amdgpu_hw_ip_info(struct amdgpu_device *adev,
 	case AMDGPU_HW_IP_VCN_DEC:
 		type = AMD_IP_BLOCK_TYPE_VCN;
 		for (i = 0; i < adev->vcn.num_vcn_inst; i++) {
-			if (adev->uvd.harvest_config & (1 << i))
+			if (adev->vcn.harvest_config & (1 << i))
 				continue;
 
 			if (adev->vcn.inst[i].ring_dec.sched.ready)
@@ -442,7 +442,7 @@ static int amdgpu_hw_ip_info(struct amdgpu_device *adev,
 	case AMDGPU_HW_IP_VCN_ENC:
 		type = AMD_IP_BLOCK_TYPE_VCN;
 		for (i = 0; i < adev->vcn.num_vcn_inst; i++) {
-			if (adev->uvd.harvest_config & (1 << i))
+			if (adev->vcn.harvest_config & (1 << i))
 				continue;
 
 			for (j = 0; j < adev->vcn.num_enc_rings; j++)
@@ -784,9 +784,15 @@ int amdgpu_info_ioctl(struct drm_device *dev, void *data, struct drm_file *filp)
 		if (adev->pm.dpm_enabled) {
 			dev_info->max_engine_clock = amdgpu_dpm_get_sclk(adev, false) * 10;
 			dev_info->max_memory_clock = amdgpu_dpm_get_mclk(adev, false) * 10;
+			dev_info->min_engine_clock = amdgpu_dpm_get_sclk(adev, true) * 10;
+			dev_info->min_memory_clock = amdgpu_dpm_get_mclk(adev, true) * 10;
 		} else {
-			dev_info->max_engine_clock = adev->clock.default_sclk * 10;
-			dev_info->max_memory_clock = adev->clock.default_mclk * 10;
+			dev_info->max_engine_clock =
+				dev_info->min_engine_clock =
+					adev->clock.default_sclk * 10;
+			dev_info->max_memory_clock =
+				dev_info->min_memory_clock =
+					adev->clock.default_mclk * 10;
 		}
 		dev_info->enabled_rb_pipes_mask = adev->gfx.config.backend_enable_mask;
 		dev_info->num_rb_pipes = adev->gfx.config.max_backends_per_se *
@@ -796,7 +802,7 @@ int amdgpu_info_ioctl(struct drm_device *dev, void *data, struct drm_file *filp)
 		dev_info->ids_flags = 0;
 		if (adev->flags & AMD_IS_APU)
 			dev_info->ids_flags |= AMDGPU_IDS_FLAGS_FUSION;
-		if (amdgpu_mcbp || amdgpu_sriov_vf(adev))
+		if (amdgpu_mcbp)
 			dev_info->ids_flags |= AMDGPU_IDS_FLAGS_PREEMPTION;
 		if (amdgpu_is_tmz(adev))
 			dev_info->ids_flags |= AMDGPU_IDS_FLAGS_TMZ;
@@ -1013,6 +1019,24 @@ int amdgpu_info_ioctl(struct drm_device *dev, void *data, struct drm_file *filp)
 			}
 			ui32 /= 100;
 			break;
+		case AMDGPU_INFO_SENSOR_PEAK_PSTATE_GFX_SCLK:
+			/* get peak pstate sclk in Mhz */
+			if (amdgpu_dpm_read_sensor(adev,
+						   AMDGPU_PP_SENSOR_PEAK_PSTATE_SCLK,
+						   (void *)&ui32, &ui32_size)) {
+				return -EINVAL;
+			}
+			ui32 /= 100;
+			break;
+		case AMDGPU_INFO_SENSOR_PEAK_PSTATE_GFX_MCLK:
+			/* get peak pstate mclk in Mhz */
+			if (amdgpu_dpm_read_sensor(adev,
+						   AMDGPU_PP_SENSOR_PEAK_PSTATE_MCLK,
+						   (void *)&ui32, &ui32_size)) {
+				return -EINVAL;
+			}
+			ui32 /= 100;
+			break;
 		default:
 			DRM_DEBUG_KMS("Invalid request %d\n",
 				      info->sensor_info.type);
@@ -1172,7 +1196,7 @@ int amdgpu_driver_open_kms(struct drm_device *dev, struct drm_file *file_priv)
 		goto error_vm;
 	}
 
-	if (amdgpu_mcbp || amdgpu_sriov_vf(adev)) {
+	if (amdgpu_mcbp) {
 		uint64_t csa_addr = amdgpu_csa_vaddr(adev) & AMDGPU_GMC_HOLE_MASK;
 
 		r = amdgpu_map_static_csa(adev, &fpriv->vm, adev->virt.csa_obj,
@@ -1236,7 +1260,7 @@ void amdgpu_driver_postclose_kms(struct drm_device *dev,
 	if (amdgpu_device_ip_get_ip_block(adev, AMD_IP_BLOCK_TYPE_VCE) != NULL)
 		amdgpu_vce_free_handles(adev, file_priv);
 
-	if (amdgpu_mcbp || amdgpu_sriov_vf(adev)) {
+	if (amdgpu_mcbp) {
 		/* TODO: how to handle reserve failure */
 		BUG_ON(amdgpu_bo_reserve(adev->virt.csa_obj, true));
 		amdgpu_vm_bo_del(adev, fpriv->csa_va);

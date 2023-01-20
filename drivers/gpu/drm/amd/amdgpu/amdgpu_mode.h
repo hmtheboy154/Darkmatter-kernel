@@ -347,8 +347,6 @@ struct amdgpu_mode_info {
 	const enum drm_plane_type *plane_type;
 };
 
-#define AMDGPU_MAX_BL_LEVEL 0xFF
-
 struct amdgpu_backlight_privdata {
 	struct amdgpu_encoder *encoder;
 	uint8_t negative;
@@ -535,6 +533,7 @@ struct amdgpu_connector {
 	void *con_priv;
 	bool dac_load_detect;
 	bool detected_by_load; /* if the connection status was determined by load */
+	bool detected_hpd_without_ddc; /* if an HPD signal was detected on DVI, but ddc probing failed */
 	uint16_t connector_object_id;
 	struct amdgpu_hpd hpd;
 	struct amdgpu_router router;

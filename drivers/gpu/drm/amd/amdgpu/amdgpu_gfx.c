@@ -372,8 +372,11 @@ int amdgpu_gfx_mqd_sw_init(struct amdgpu_device *adev,
 		 * KIQ MQD no matter SRIOV or Bare-metal
 		 */
 		r = amdgpu_bo_create_kernel(adev, mqd_size, PAGE_SIZE,
-					    AMDGPU_GEM_DOMAIN_VRAM, &ring->mqd_obj,
-					    &ring->mqd_gpu_addr, &ring->mqd_ptr);
+					    AMDGPU_GEM_DOMAIN_VRAM |
+					    AMDGPU_GEM_DOMAIN_GTT,
+					    &ring->mqd_obj,
+					    &ring->mqd_gpu_addr,
+					    &ring->mqd_ptr);
 		if (r) {
 			dev_warn(adev->dev, "failed to create ring mqd ob (%d)", r);
 			return r;
@@ -583,10 +586,14 @@ void amdgpu_gfx_off_ctrl(struct amdgpu_device *adev, bool enable)
 		if (adev->gfx.gfx_off_req_count == 0 &&
 		    !adev->gfx.gfx_off_state) {
 			/* If going to s2idle, no need to wait */
-			if (adev->in_s0ix)
-				delay = GFX_OFF_NO_DELAY;
-			schedule_delayed_work(&adev->gfx.gfx_off_delay_work,
+			if (adev->in_s0ix) {
+				if (!amdgpu_dpm_set_powergating_by_smu(adev,
+						AMD_IP_BLOCK_TYPE_GFX, true))
+					adev->gfx.gfx_off_state = true;
+			} else {
+				schedule_delayed_work(&adev->gfx.gfx_off_delay_work,
 					      delay);
+			}
 		}
 	} else {
 		if (adev->gfx.gfx_off_req_count == 0) {

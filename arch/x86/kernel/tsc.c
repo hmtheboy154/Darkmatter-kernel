@@ -47,6 +47,7 @@ static unsigned int __initdata tsc_early_khz;
 static DEFINE_STATIC_KEY_FALSE(__use_tsc);
 
 int tsc_clocksource_reliable;
+int tsc_allow_direct_sync;
 
 static u32 art_to_tsc_numerator;
 static u32 art_to_tsc_denominator;
@@ -303,6 +304,8 @@ static int __init tsc_setup(char *str)
 		mark_tsc_unstable("boot parameter");
 	if (!strcmp(str, "nowatchdog"))
 		no_tsc_watchdog = 1;
+	if (!strcmp(str, "directsync"))
+		tsc_allow_direct_sync = 1;
 	return 1;
 }
 

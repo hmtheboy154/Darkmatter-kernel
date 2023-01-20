@@ -117,7 +117,7 @@ struct psr_settings {
  * Add a struct dc_panel_config under dc_link
  */
 struct dc_panel_config {
-	// extra panel power sequence parameters
+	/* extra panel power sequence parameters */
 	struct pps {
 		unsigned int extra_t3_ms;
 		unsigned int extra_t7_ms;
@@ -127,13 +127,21 @@ struct dc_panel_config {
 		unsigned int extra_t12_ms;
 		unsigned int extra_post_OUI_ms;
 	} pps;
-	// ABM
+	/* PSR */
+	struct psr {
+		bool disable_psr;
+		bool disallow_psrsu;
+		bool rc_disable;
+		bool rc_allow_static_screen;
+		bool rc_allow_fullscreen_VPB;
+	} psr;
+	/* ABM */
 	struct varib {
 		unsigned int varibright_feature_enable;
 		unsigned int def_varibright_level;
 		unsigned int abm_config_setting;
 	} varib;
-	// edp DSC
+	/* edp DSC */
 	struct dsc {
 		bool disable_dsc_edp;
 		unsigned int force_dsc_edp_policy;
@@ -143,6 +151,20 @@ struct dc_panel_config {
 		bool optimize_edp_link_rate; /* eDP ILR */
 	} ilr;
 };
+
+/*
+ *  USB4 DPIA BW ALLOCATION STRUCTS
+ */
+struct dc_dpia_bw_alloc {
+	int sink_verified_bw;  // The Verified BW that sink can allocated and use that has been verified already
+	int sink_allocated_bw; // The Actual Allocated BW that sink currently allocated
+	int padding_bw;        // The Padding "Un-used" BW allocated by CM for padding reasons
+	int sink_max_bw;       // The Max BW that sink can require/support
+	int estimated_bw;      // The estimated available BW for this DPIA
+	int bw_granularity;    // BW Granularity
+	bool bw_alloc_enabled; // The BW Alloc Mode Support is turned ON for all 3:  DP-Tx & Dpia & CM
+};
+
 /*
  * A link contains one or more sinks and their connected status.
  * The currently active signal type (HDMI, DP-SST, DP-MST) is also reported.
@@ -158,16 +180,26 @@ struct dc_link {
 	enum dc_irq_source irq_source_hpd_rx;/* aka DP Short Pulse  */
 	bool is_hpd_filter_disabled;
 	bool dp_ss_off;
+
+	/**
+	 * @link_state_valid:
+	 *
+	 * If there is no link and local sink, this variable should be set to
+	 * false. Otherwise, it should be set to true; usually, the function
+	 * core_link_enable_stream sets this field to true.
+	 */
 	bool link_state_valid;
 	bool aux_access_disabled;
 	bool sync_lt_in_progress;
 	bool is_internal_display;
+	bool mst_dpcd_fail_on_resume;
 
 	/* TODO: Rename. Flag an endpoint as having a programmable mapping to a
 	 * DIG encoder. */
 	bool is_dig_mapping_flexible;
 	bool hpd_status; /* HPD status of link without physical HPD pin. */
 	bool is_hpd_pending; /* Indicates a new received hpd */
+	bool is_automated; /* Indicates automated testing */
 
 	bool edp_sink_present;
 
@@ -304,15 +336,18 @@ static inline bool dc_get_edp_link_panel_inst(const struct dc *dc,
 		unsigned int *inst_out)
 {
 	struct dc_link *edp_links[MAX_NUM_EDP];
-	int edp_num;
+	int edp_num, i;
 
-	if (link->connector_signal != SIGNAL_TYPE_EDP)
+	*inst_out = 0;
+	if (link->connector_signal != SIGNAL_TYPE_EDP || !link->local_sink)
 		return false;
 	get_edp_links(dc, edp_links, &edp_num);
-	if ((edp_num > 1) && (link->link_index > edp_links[0]->link_index))
-		*inst_out = 1;
-	else
-		*inst_out = 0;
+	for (i = 0; i < edp_num; i++) {
+		if (link == edp_links[i])
+			break;
+		if (edp_links[i]->local_sink)
+			(*inst_out)++;
+	}
 	return true;
 }
 
@@ -473,6 +508,7 @@ bool dc_link_detect_sink(struct dc_link *link, enum dc_connection_type *type);
 bool dc_link_is_hdcp14(struct dc_link *link, enum signal_type signal);
 bool dc_link_is_hdcp22(struct dc_link *link, enum signal_type signal);
 #endif
+bool wait_for_entering_dp_alt_mode(struct dc_link *link);
 void dc_link_set_drive_settings(struct dc *dc,
 				struct link_training_settings *lt_settings,
 				const struct dc_link *link);

@@ -144,6 +144,20 @@ extern "C" {
  * content.
  */
 #define AMDGPU_GEM_CREATE_DISCARDABLE		(1 << 12)
+/* Flag that BO is shared coherently between multiple devices or CPU threads.
+ * May depend on GPU instructions to flush caches explicitly
+ *
+ * This influences the choice of MTYPE in the PTEs on GFXv9 and later GPUs and
+ * may override the MTYPE selected in AMDGPU_VA_OP_MAP.
+ */
+#define AMDGPU_GEM_CREATE_COHERENT		(1 << 13)
+/* Flag that BO should not be cached by GPU. Coherent without having to flush
+ * GPU caches explicitly
+ *
+ * This influences the choice of MTYPE in the PTEs on GFXv9 and later GPUs and
+ * may override the MTYPE selected in AMDGPU_VA_OP_MAP.
+ */
+#define AMDGPU_GEM_CREATE_UNCACHED		(1 << 14)
 
 struct drm_amdgpu_gem_create_in  {
 	/** the requested memory size */
@@ -818,6 +832,10 @@ struct drm_amdgpu_cs_chunk_data {
 	#define AMDGPU_INFO_SENSOR_STABLE_PSTATE_GFX_SCLK		0x8
 	/* Subquery id: Query GPU stable pstate memory clock */
 	#define AMDGPU_INFO_SENSOR_STABLE_PSTATE_GFX_MCLK		0x9
+	/* Subquery id: Query GPU peak pstate shader clock */
+	#define AMDGPU_INFO_SENSOR_PEAK_PSTATE_GFX_SCLK			0xa
+	/* Subquery id: Query GPU peak pstate memory clock */
+	#define AMDGPU_INFO_SENSOR_PEAK_PSTATE_GFX_MCLK			0xb
 /* Number of VRAM page faults on CPU access. */
 #define AMDGPU_INFO_NUM_VRAM_CPU_PAGE_FAULTS	0x1E
 #define AMDGPU_INFO_VRAM_LOST_COUNTER		0x1F
@@ -1093,6 +1111,8 @@ struct drm_amdgpu_info_device {
 	__u32 pa_sc_tile_steering_override;
 	/* disabled TCCs */
 	__u64 tcc_disabled_mask;
+	__u64 min_engine_clock;
+	__u64 min_memory_clock;
 };
 
 struct drm_amdgpu_info_hw_ip {

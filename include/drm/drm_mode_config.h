@@ -800,6 +800,31 @@ struct drm_mode_config {
 	 * degamma LUT.
 	 */
 	struct drm_property *ctm_property;
+
+	/**
+	 * @shaper_lut_property: Optional CRTC property to set the shaper LUT used to
+	 * convert colors before 3D LUT conversion.
+	 */
+	struct drm_property *shaper_lut_property;
+	/**
+	 * @shaper_lut_size_property: Optional CRTC property for the size of the
+	 * shaper LUT as supported by the driver (read-only).
+	 */
+	struct drm_property *shaper_lut_size_property;
+
+	/**
+	 * @lut3d_property: Optional CRTC property to set the 3D LUT used to
+	 * convert colors; before or after gamma conversion depends on hw
+	 * design. A shaper LUT can be used to delinearize content before apply
+	 * 3D LUT correction.
+	 */
+	struct drm_property *lut3d_property;
+	/**
+	 * @lut3d_size_property: Optional CRTC property for the size of the
+	 * 3D LUT as supported by the driver (read-only).
+	 */
+	struct drm_property *lut3d_size_property;
+
 	/**
 	 * @gamma_lut_property: Optional CRTC property to set the LUT used to
 	 * convert the colors, after the CTM matrix, to the gamma space of the
@@ -916,6 +941,17 @@ struct drm_mode_config {
 	 * plane?
 	 */
 	bool async_page_flip;
+
+	/**
+	 * @atomic_async_page_flip_not_supported:
+	 *
+	 * If true, the driver does not support async page-flips with the
+	 * atomic uAPI. This is only used by old drivers which haven't yet
+	 * accomodated for &drm_crtc_state.async_flip in their atomic logic,
+	 * even if they have &drm_mode_config.async_page_flip set to true.
+	 * New drivers shall not set this flag.
+	 */
+	bool atomic_async_page_flip_not_supported;
 
 	/**
 	 * @fb_modifiers_not_supported:
