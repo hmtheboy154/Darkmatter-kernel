@@ -45,6 +45,7 @@
 #include <trace/hooks/dmabuf.h>
 #include <trace/hooks/timer.h>
 #include <trace/hooks/topology.h>
+#include <trace/hooks/hung_task.h>
 
 /*
  * Export tracepoints that act as a bare tracehook (ie: have no trace event
@@ -96,6 +97,7 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(android_rvh_iommu_alloc_insert_iova);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_iommu_iovad_alloc_iova);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_iommu_iovad_free_iova);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_rvh_iommu_iovad_init_alloc_algo);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_rvh_iommu_limit_align_shift);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_ptype_head);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_allow_domain_state);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_cpuidle_psci_enter);
@@ -134,3 +136,5 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_aes_expandkey);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_aes_encrypt);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_aes_decrypt);
 EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_timer_calc_index);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_check_uninterrupt_tasks);
+EXPORT_TRACEPOINT_SYMBOL_GPL(android_vh_check_uninterrupt_tasks_done);
