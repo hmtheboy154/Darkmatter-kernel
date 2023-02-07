@@ -1140,6 +1140,13 @@ config WINMATE_FM07_KEYS
 	  buttons below the display. This module adds an input device
 	  that delivers key events when these buttons are pressed.
 
+config JUPITER
+       tristate "Valve Jupiter platform driver"
+       depends on X86_64
+       help
+         This driver exposes various bits of Jupiter platform specific
+         ACPI functionality.
+
 endif # X86_PLATFORM_DEVICES
 
 config P2SB
