@@ -77,6 +77,7 @@
 #include <linux/pm_runtime.h>
 
 #include <drm/drm_drv.h>
+#include <drm/drm_sysfs.h>
 
 MODULE_FIRMWARE("amdgpu/vega10_gpu_info.bin");
 MODULE_FIRMWARE("amdgpu/vega12_gpu_info.bin");
@@ -3376,6 +3377,17 @@ bool amdgpu_device_has_dc_support(struct amdgpu_device *adev)
 	return amdgpu_device_asic_has_dc_support(adev->asic_type);
 }
 
+static void amdgpu_device_reset_event_func(struct work_struct *__work)
+{
+	struct amdgpu_device *adev = container_of(__work, struct amdgpu_device,
+						  gpu_reset_event_work);
+	/*
+	 * A GPU reset has happened, inform the userspace and pass the
+	 * reset related information.
+	 */
+	drm_sysfs_reset_event(&adev->ddev, &adev->reset_event_info);
+}
+
 static void amdgpu_device_xgmi_reset_func(struct work_struct *__work)
 {
 	struct amdgpu_device *adev =
@@ -3627,6 +3639,7 @@ int amdgpu_device_init(struct amdgpu_device *adev,
 			  amdgpu_device_delay_enable_gfx_off);
 
 	INIT_WORK(&adev->xgmi_reset_work, amdgpu_device_xgmi_reset_func);
+	INIT_WORK(&adev->gpu_reset_event_work, amdgpu_device_reset_event_func);
 
 	adev->gfx.gfx_off_req_count = 1;
 	adev->gfx.gfx_off_residency = 0;
@@ -4946,6 +4959,20 @@ int amdgpu_do_asic_reset(struct list_head *device_list_handle,
 						reset_context->job->vm->task_info;
 				amdgpu_reset_capture_coredumpm(tmp_adev);
 #endif
+				if (reset_context->job && reset_context->job->vm) {
+					tmp_adev->reset_event_info.pid =
+						reset_context->job->vm->task_info.pid;
+					memset(tmp_adev->reset_event_info.pname, 0, TASK_COMM_LEN);
+					strcpy(tmp_adev->reset_event_info.pname,
+						reset_context->job->vm->task_info.process_name);
+				} else {
+					tmp_adev->reset_event_info.pid = 0;
+					memset(tmp_adev->reset_event_info.pname, 0, TASK_COMM_LEN);
+				}
+
+				tmp_adev->reset_event_info.flags = vram_lost;
+				schedule_work(&tmp_adev->gpu_reset_event_work);
+
 				if (vram_lost) {
 					DRM_INFO("VRAM is lost due to GPU reset!\n");
 					amdgpu_inc_vram_lost(tmp_adev);
