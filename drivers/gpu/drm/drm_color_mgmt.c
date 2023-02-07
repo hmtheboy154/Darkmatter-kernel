@@ -69,6 +69,43 @@
  *	boot-up state too. Drivers can access the blob for the color conversion
  *	matrix through &drm_crtc_state.ctm.
  *
+ * “SHAPER_LUT”:
+ *	Blob property to set the shaper lut shaping pixel data after the color
+ *	transformation matrix and before applying 3D Lookup Table (3D LUT). It
+ *	can be used to delinearize content to get an effective 3D LUT mapping.
+ *	The data is interpreted as an array of &struct drm_color_lut elements.
+ *
+ *	Setting this to NULL (blob property value set to 0) means the output
+ *	color is identical to the input color. This is generally the driver
+ *	boot-up state too. Drivers can access this blob through
+ *	&drm_crtc_state.gamma_lut.
+ *
+ * “SHAPER_LUT_SIZE”:
+ *	Unsigned range property to give the size of the shaper lookup table to
+ *	be set on the SHAPER_LUT property (the size depends on the underlying
+ *	hardware). If drivers support multiple LUT sizes then they should
+ *	publish the largest size, and sub-sample smaller sized LUTs
+ *	appropriately.
+ *
+ * “LUT3D”:
+ *	Blob property to set the 3D LUT mapping pixel data after the color
+ *	transformation matrix and before gamma 1D lut correction. The
+ *	data is interpreted as an array of &struct drm_color_lut elements.
+ *	Hardware might choose not to use the full precision of the LUT
+ *	elements.
+ *
+ *	Setting this to NULL (blob property value set to 0) means a the output
+ *	color is identical to the input color. This is generally the driver
+ *	boot-up state too. Drivers can access this blob through
+ *	&drm_crtc_state.gamma_lut.
+ *
+ * “LUT3D_SIZE”:
+ *	Unsigned range property to give the size of the 3D lookup table to be
+ *	set on the LUT3D property (the size depends on the underlying
+ *	hardware). If drivers support multiple LUT sizes then they should
+ *	publish the largest size, and sub-sample smaller sized LUTs
+ *	appropriately.
+ *
  * “GAMMA_LUT”:
  *	Blob property to set the gamma lookup table (LUT) mapping pixel data
  *	after the transformation matrix to data sent to the connector. The
@@ -153,13 +190,12 @@ EXPORT_SYMBOL(drm_color_ctm_s31_32_to_qm_n);
  * @has_ctm: whether to attach ctm_property for CSC matrix
  * @gamma_lut_size: the size of the gamma lut (after CSC)
  *
- * This function lets the driver enable the color correction
- * properties on a CRTC. This includes 3 degamma, csc and gamma
- * properties that userspace can set and 2 size properties to inform
- * the userspace of the lut sizes. Each of the properties are
- * optional. The gamma and degamma properties are only attached if
- * their size is not 0 and ctm_property is only attached if has_ctm is
- * true.
+ * This function lets the driver enable the color correction properties on a
+ * CRTC. This includes 3 properties (degamma, csc and gamma) that
+ * userspace can set and 2 size properties to inform the userspace of the lut
+ * sizes. Each of the properties are optional. The gamma and degamma
+ * properties are only attached if their size is not 0 and ctm_property is only
+ * attached if has_ctm is true.
  */
 void drm_crtc_enable_color_mgmt(struct drm_crtc *crtc,
 				uint degamma_lut_size,
@@ -190,6 +226,44 @@ void drm_crtc_enable_color_mgmt(struct drm_crtc *crtc,
 	}
 }
 EXPORT_SYMBOL(drm_crtc_enable_color_mgmt);
+
+/**
+ * drm_crtc_enable_lut3d - enable 3D LUT properties
+ * @crtc: DRM CRTC
+ * @shaper_lut_size: the size of shaper lut
+ * @lut3d_size: the size of 3D lut
+ *
+ * This function lets the driver enable the 3D LUT color correction property
+ * on a CRTC. This includes 3D LUT and also a shaper LUT, if set. The shaper
+ * LUT property is only attached if its size is not 0 and 3D LUT is set, being
+ * therefore optional.
+ */
+void drm_crtc_enable_lut3d(struct drm_crtc *crtc,
+			   uint shaper_lut_size,
+			   uint lut3d_size)
+{
+	struct drm_device *dev = crtc->dev;
+	struct drm_mode_config *config = &dev->mode_config;
+
+	if (!lut3d_size)
+		return;
+
+	drm_object_attach_property(&crtc->base,
+				   config->lut3d_property, 0);
+	drm_object_attach_property(&crtc->base,
+				   config->lut3d_size_property,
+				   lut3d_size);
+	if (!shaper_lut_size)
+		return;
+
+	drm_object_attach_property(&crtc->base,
+				   config->shaper_lut_property, 0);
+	drm_object_attach_property(&crtc->base,
+				   config->shaper_lut_size_property,
+				   shaper_lut_size);
+
+}
+EXPORT_SYMBOL(drm_crtc_enable_lut3d);
 
 /**
  * drm_mode_crtc_set_gamma_size - set the gamma table size
