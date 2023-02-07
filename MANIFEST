@@ -1,0 +1,40 @@
+6.1/features/stable-updates:
+    68a95455c153f8adc513e5b688f4b348daa7c1b1 ("Linux 6.1.9")
+6.1/features/acpi:
+    2f595260ffa2cd6518ff9b0cb1c8e4022aff3dfc ("acpi: Bump ACPI_MAX_HANDLES to 16")
+6.1/features/amd-extra:
+    1196693bf39bb890fd7e75aa4fe9dce5e18bef11 ("drm/amd/display: Attempt to fix DC crashes on external display use.")
+6.1/features/amd-hdr-colorimetry:
+    52bbbd82b4bf54321963533c62ae3b4cfdbd998f ("drm/amd/display: Remove unused display_content_support")
+6.1/features/amd-indirect-sram:
+    c2b1b6df5c886f58d43e34083305c54ab3c3837b ("(NOT FOR UPSTREAM/WORKAROUND) drm/amdgpu/vcn: Force indirect SRAM off on Steam Deck")
+6.1/features/amd-staging-drm-next:
+    f288819cee66d4fefe2bea3f1fc199075429c8e5 ("Merge branch 'amd-staging-drm-next' of git@gitlab.freedesktop.org:agd5f/linux")
+6.1/features/backlight-notif:
+    b9c444cedd8a0a832324ccaaf4e4313f9139b1c3 ("drivers: video: backlight: Disable backlight notification events.")
+6.1/features/backlight-precision:
+    7c0076ec99760d5b82a50d75969ab039d1524cb0 ("amd/drm : override backlight min value from 12 -> 0")
+6.1/features/crtc-lut3d:
+    812d12bb741c045d5e80a62494dc80422c345298 ("HACK: Prefix SHAPER_LUT and LUT3D with VALVE1_")
+6.1/features/futex-waitv:
+    ae3ca89b80ec33ca9e8baed9319c915a22525301 ("futex: Add entry point for FUTEX_WAIT_MULTIPLE (opcode 31)")
+6.1/features/gpu-reset:
+    b65228799e5ac96211b0e4c342d0a4478a1b6410 ("drm/amdgpu: schedule GPU reset event work function")
+6.1/features/mm-soft-dirty-file:
+    a325a7b546ec539ca7877f258bb59beff9ef41fc ("mm: Use UFFD_WP to make per-pte soft dirty tracking work reliably.")
+6.1/features/platform:
+    0f17f96f7a71b8e511527940f425d8ba77ed1b1a ("platform: jupiter: Add support for PD voltage/current readings")
+6.1/features/quirks:
+    cd98b05c243860ff40ba3461fe6f29994b6086ef ("mmc: core: add safe_trim_quirk attribute")
+6.1/features/setup-gitlabci:
+    7011562f78b595006ce8a72599356fc17a940b0e ("gitlab-ci: Enable Steam Deck MFD driver")
+6.1/features/steamdeck-mfd:
+    7091a8ea1052a72bc21831e07ffee06c4d7e8625 ("extcon: Add driver for Steam Deck")
+6.1/features/tcp-timewait:
+    ef76035f50a1147a0d39b3d9c1b80b92a2961028 ("tcp: Also use tcp_fin_timeout as TCP TIME_WAIT timeout for loopback connections")
+6.1/features/tsc:
+    107385ee5b190c2c34ce8c6ff27720e87da94dbb ("x86: don't check for random warps if using direct sync")
+6.1/features/usb:
+    42c03cb9688e004b3ba2f433a616881f04eded36 ("usb: dwc3: Fix "linux,extcon-name"")
+6.1/features/valve-extra:
+    ac918127770aa90e04af4b45551528b1a1e2f65b ("Input: xpad: Fix the usage of usb_control_msg()")
