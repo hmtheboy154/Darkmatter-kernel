@@ -9682,6 +9682,28 @@ static int dm_check_crtc_cursor(struct drm_atomic_state *state,
 			break;
 	}
 
+	if (new_underlying_state->rotation != new_cursor_state->rotation) {
+		drm_dbg_atomic(crtc->dev, "Cursor plane rotation doesn't match underlying plane\n");
+		return -EINVAL;
+	}
+
+	/* In theory we could probably support YUV cursors when the underlying
+	 * plane uses a YUV format, but there's no use-case for it yet. */
+	if (new_underlying_state->fb && new_underlying_state->fb->format && new_underlying_state->fb->format->is_yuv) {
+		drm_dbg_atomic(crtc->dev, "Cursor plane can't be used with YUV underlying plane\n");
+		return -EINVAL;
+	}
+
+	if (new_underlying_state->alpha != DRM_BLEND_ALPHA_OPAQUE) {
+		drm_dbg_atomic(crtc->dev, "Cursor plane can't be used with non-opaque underlying plane\n");
+		return -EINVAL;
+	}
+
+	if (new_underlying_state->pixel_blend_mode != DRM_MODE_BLEND_PREMULTI) {
+		drm_dbg_atomic(crtc->dev, "Cursor plane can't be used with non-premultiplied underlying plane\n");
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
