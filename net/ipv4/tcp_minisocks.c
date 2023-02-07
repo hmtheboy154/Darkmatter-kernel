@@ -142,7 +142,7 @@ tcp_timewait_state_process(struct inet_timewait_sock *tw, struct sk_buff *skb,
 			tcptw->tw_ts_recent	  = tmp_opt.rcv_tsval;
 		}
 
-		inet_twsk_reschedule(tw, TCP_TIMEWAIT_LEN);
+		inet_twsk_reschedule(tw, tcp_timewait_len(tw));
 		return TCP_TW_ACK;
 	}
 
@@ -179,7 +179,7 @@ kill:
 				return TCP_TW_SUCCESS;
 			}
 		} else {
-			inet_twsk_reschedule(tw, TCP_TIMEWAIT_LEN);
+			inet_twsk_reschedule(tw, tcp_timewait_len(tw));
 		}
 
 		if (tmp_opt.saw_tstamp) {
@@ -230,7 +230,7 @@ kill:
 		 * Do not reschedule in the last case.
 		 */
 		if (paws_reject || th->ack)
-			inet_twsk_reschedule(tw, TCP_TIMEWAIT_LEN);
+			inet_twsk_reschedule(tw, tcp_timewait_len(tw));
 
 		return tcp_timewait_check_oow_rate_limit(
 			tw, skb, LINUX_MIB_TCPACKSKIPPEDTIMEWAIT);
@@ -308,7 +308,7 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 			timeo = rto;
 
 		if (state == TCP_TIME_WAIT)
-			timeo = TCP_TIMEWAIT_LEN;
+			timeo = tcp_timewait_len(tw);
 
 		/* tw_timer is pinned, so we need to make sure BH are disabled
 		 * in following section, otherwise timer handler could run before
