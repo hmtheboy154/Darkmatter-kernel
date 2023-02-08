@@ -399,6 +399,7 @@
   _copy_to_iter
   __cpu_active_mask
   cpu_bit_bitmap
+  __cpu_dying_mask
   cpufreq_cpu_get
   cpufreq_cpu_get_raw
   cpufreq_cpu_put
@@ -531,6 +532,7 @@
   dec_zone_page_state
   default_llseek
   default_wake_function
+  deferred_free
   delayed_work_timer_fn
   del_gendisk
   del_timer
@@ -1195,6 +1197,7 @@
   get_net_ns_by_fd
   get_net_ns_by_pid
   get_option
+  get_pfnblock_flags_mask
   get_pid_task
   get_random_bytes
   get_random_u16
@@ -1703,6 +1706,8 @@
   irq_work_queue
   irq_work_queue_on
   irq_work_sync
+  isolate_and_split_free_page
+  isolate_anon_lru_page
   is_vmalloc_addr
   iterate_fd
   jiffies
@@ -1765,6 +1770,7 @@
   kmemdup
   kmemdup_nul
   kmsg_dump_get_buffer
+  kmsg_dump_get_line
   kmsg_dump_register
   kmsg_dump_rewind
   kmsg_dump_unregister
@@ -1953,6 +1959,7 @@
   __memset_io
   memstart_addr
   memunmap
+  migrate_pages
   migrate_swap
   __migrate_task
   mipi_dsi_create_packet
@@ -2459,6 +2466,7 @@
   ptp_clock_index
   ptp_clock_register
   ptp_clock_unregister
+  putback_movable_pages
   put_cmsg
   put_device
   put_disk
@@ -3514,6 +3522,7 @@
   unregister_restart_handler
   unregister_rpmsg_driver
   unregister_shrinker
+  unregister_syscore_ops
   unregister_sysctl_table
   up
   update_devfreq
