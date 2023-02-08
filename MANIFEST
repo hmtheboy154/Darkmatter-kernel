@@ -1,5 +1,5 @@
 6.1/features/stable-updates:
-    21e996306a6afaae88295858de0ffb8955173a15 ("Linux 6.1.7")
+    68a95455c153f8adc513e5b688f4b348daa7c1b1 ("Linux 6.1.9")
 6.1/features/acpi:
     2f595260ffa2cd6518ff9b0cb1c8e4022aff3dfc ("acpi: Bump ACPI_MAX_HANDLES to 16")
 6.1/features/amd-extra:
