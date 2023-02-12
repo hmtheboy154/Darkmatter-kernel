@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-config MISC_ITHC
+config HID_ITHC
 	tristate "Intel Touch Host Controller"
-	depends on INTEL_MEI
+	depends on PCI
 	depends on HID
 	help
 	  Say Y here if your system has a touchscreen using Intel
