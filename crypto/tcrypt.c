@@ -1295,15 +1295,6 @@ static void test_mb_skcipher_speed(const char *algo, int enc, int secs,
 			goto out_free_tfm;
 		}
 
-
-	for (i = 0; i < num_mb; ++i)
-		if (testmgr_alloc_buf(data[i].xbuf)) {
-			while (i--)
-				testmgr_free_buf(data[i].xbuf);
-			goto out_free_tfm;
-		}
-
-
 	for (i = 0; i < num_mb; ++i) {
 		data[i].req = skcipher_request_alloc(tfm, GFP_KERNEL);
 		if (!data[i].req) {
@@ -1750,6 +1741,7 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 		ret += tcrypt_test("rfc3686(ctr(aes))");
 		ret += tcrypt_test("ofb(aes)");
 		ret += tcrypt_test("cfb(aes)");
+		ret += tcrypt_test("xctr(aes)");
 		break;
 
 	case 11:
@@ -1917,6 +1909,10 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 
 	case 56:
 		ret += tcrypt_test("ccm(sm4)");
+		break;
+
+	case 57:
+		ret += tcrypt_test("polyval");
 		break;
 
 	case 100:
@@ -2374,6 +2370,11 @@ static int do_test(const char *alg, u32 type, u32 mask, int m, u32 num_mb)
 				   16, 16, aead_speed_template_19, num_mb);
 		test_mb_aead_speed("rfc4309(ccm(sm4))", DECRYPT, sec, NULL, 0,
 				   16, 16, aead_speed_template_19, num_mb);
+		break;
+
+	case 226:
+		test_cipher_speed("hctr2(aes)", ENCRYPT, sec, NULL,
+				  0, speed_template_32);
 		break;
 
 	case 300:

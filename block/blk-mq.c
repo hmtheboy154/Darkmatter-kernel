@@ -2196,6 +2196,8 @@ blk_qc_t blk_mq_submit_bio(struct bio *bio)
 
 	blk_queue_bounce(q, &bio);
 	__blk_queue_split(&bio, &nr_segs);
+	if (!bio)
+		goto queue_exit;
 
 	if (!bio_integrity_prep(bio))
 		goto queue_exit;
@@ -2464,7 +2466,7 @@ int blk_mq_alloc_rqs(struct blk_mq_tag_set *set, struct blk_mq_tags *tags,
 	 */
 	rq_size = round_up(sizeof(struct request) + set->cmd_size,
 				cache_line_size());
-	trace_android_vh_blk_alloc_rqs(&rq_size, set, tags);
+	trace_android_vh_blk_alloc_rqs(&rq_size, set, tags, hctx_idx);
 	left = rq_size * depth;
 
 	for (i = 0; i < depth; ) {
