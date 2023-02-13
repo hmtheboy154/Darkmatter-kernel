@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2016 Intel Corporation
- * Copyright (c) 2020-2022 Dorian Stoll
+ * Copyright (c) 2022-2023 Dorian Stoll
  *
  * Linux driver for Intel Precise Touch & Stylus
  */
@@ -30,31 +30,6 @@ static void ipts_hid_stop(struct hid_device *hid)
 {
 }
 
-static int ipts_hid_hid2me_feedback(struct ipts_context *ipts, enum ipts_feedback_data_type type,
-				    void *data, size_t size)
-{
-	struct ipts_feedback_header *header;
-
-	if (!ipts)
-		return -EFAULT;
-
-	memset(ipts->resources.hid2me.address, 0, ipts->resources.hid2me.size);
-	header = (struct ipts_feedback_header *)ipts->resources.hid2me.address;
-
-	header->cmd_type = IPTS_FEEDBACK_CMD_TYPE_NONE;
-	header->buffer = IPTS_HID2ME_BUFFER;
-	header->data_type = type;
-	header->size = size;
-
-	if (size + sizeof(*header) > ipts->resources.hid2me.size)
-		return -EINVAL;
-
-	if (data && size > 0)
-		memcpy(header->payload, data, size);
-
-	return ipts_control_send_feedback(ipts, IPTS_HID2ME_BUFFER);
-}
-
 static int ipts_hid_switch_mode(struct ipts_context *ipts, enum ipts_mode mode)
 {
 	if (!ipts)
@@ -75,14 +50,16 @@ static int ipts_hid_switch_mode(struct ipts_context *ipts, enum ipts_mode mode)
 
 static int ipts_hid_parse(struct hid_device *hid)
 {
-	int ret;
-	u8 *buffer;
-	size_t size;
-	struct ipts_context *ipts;
-	bool has_native_descriptor;
+	int ret = 0;
+	struct ipts_context *ipts = NULL;
+
+	bool has_native_descriptor = false;
+
+	u8 *buffer = NULL;
+	size_t size = 0;
 
 	if (!hid)
-		return -EFAULT;
+		return -ENODEV;
 
 	ipts = hid->driver_data;
 
@@ -98,6 +75,9 @@ static int ipts_hid_parse(struct hid_device *hid)
 		size += sizeof(ipts_fallback_descriptor);
 
 	buffer = kzalloc(size, GFP_KERNEL);
+	if (!buffer)
+		return -ENOMEM;
+
 	memcpy(buffer, ipts_singletouch_descriptor, sizeof(ipts_singletouch_descriptor));
 
 	if (has_native_descriptor) {
@@ -122,7 +102,13 @@ static int ipts_hid_parse(struct hid_device *hid)
 static int ipts_hid_get_feature(struct ipts_context *ipts, unsigned char reportnum, __u8 *buf,
 				size_t size, enum ipts_feedback_data_type type)
 {
-	int ret;
+	int ret = 0;
+
+	if (!ipts)
+		return -EFAULT;
+
+	if (!buf)
+		return -EFAULT;
 
 	mutex_lock(&ipts->feature_lock);
 
@@ -132,7 +118,7 @@ static int ipts_hid_get_feature(struct ipts_context *ipts, unsigned char reportn
 	memset(&ipts->feature_report, 0, sizeof(ipts->feature_report));
 	reinit_completion(&ipts->feature_event);
 
-	ret = ipts_hid_hid2me_feedback(ipts, type, buf, size);
+	ret = ipts_control_hid2me_feedback(ipts, IPTS_FEEDBACK_CMD_TYPE_NONE, type, buf, size);
 	if (ret) {
 		dev_err(ipts->dev, "Failed to send hid2me feedback: %d\n", ret);
 		goto out;
@@ -166,11 +152,17 @@ out:
 static int ipts_hid_set_feature(struct ipts_context *ipts, unsigned char reportnum, __u8 *buf,
 				size_t size, enum ipts_feedback_data_type type)
 {
-	int ret;
+	int ret = 0;
+
+	if (!ipts)
+		return -EFAULT;
+
+	if (!buf)
+		return -EFAULT;
 
 	buf[0] = reportnum;
 
-	ret = ipts_hid_hid2me_feedback(ipts, type, buf, size);
+	ret = ipts_control_hid2me_feedback(ipts, IPTS_FEEDBACK_CMD_TYPE_NONE, type, buf, size);
 	if (ret)
 		dev_err(ipts->dev, "Failed to send hid2me feedback: %d\n", ret);
 
@@ -180,12 +172,13 @@ static int ipts_hid_set_feature(struct ipts_context *ipts, unsigned char reportn
 static int ipts_hid_raw_request(struct hid_device *hid, unsigned char reportnum, __u8 *buf,
 				size_t size, unsigned char rtype, int reqtype)
 {
-	int ret;
-	enum ipts_feedback_data_type type;
-	struct ipts_context *ipts;
+	int ret = 0;
+	struct ipts_context *ipts = NULL;
+
+	enum ipts_feedback_data_type type = IPTS_FEEDBACK_DATA_TYPE_VENDOR;
 
 	if (!hid)
-		return -EFAULT;
+		return -ENODEV;
 
 	ipts = hid->driver_data;
 
@@ -221,20 +214,15 @@ static int ipts_hid_raw_request(struct hid_device *hid, unsigned char reportnum,
 
 static int ipts_hid_output_report(struct hid_device *hid, __u8 *data, size_t size)
 {
-	struct ipts_context *ipts;
+	struct ipts_context *ipts = NULL;
 
 	if (!hid)
-		return -EFAULT;
+		return -ENODEV;
 
 	ipts = hid->driver_data;
 
-	if (!ipts)
-		return -EFAULT;
-
-	if (!data)
-		return -EFAULT;
-
-	return ipts_hid_hid2me_feedback(ipts, IPTS_FEEDBACK_DATA_TYPE_OUTPUT_REPORT, data, size);
+	return ipts_control_hid2me_feedback(ipts, IPTS_FEEDBACK_CMD_TYPE_NONE,
+					    IPTS_FEEDBACK_DATA_TYPE_OUTPUT_REPORT, data, size);
 }
 
 static struct hid_ll_driver ipts_hid_driver = {
@@ -247,12 +235,12 @@ static struct hid_ll_driver ipts_hid_driver = {
 	.output_report = ipts_hid_output_report,
 };
 
-int ipts_hid_input_data(struct ipts_context *ipts, int buffer)
+int ipts_hid_input_data(struct ipts_context *ipts, u32 buffer)
 {
-	int ret;
-	u8 *temp;
-	struct ipts_hid_header *frame;
-	struct ipts_data_header *header;
+	int ret = 0;
+	u8 *temp = NULL;
+	struct ipts_hid_header *frame = NULL;
+	struct ipts_data_header *header = NULL;
 
 	if (!ipts)
 		return -EFAULT;
@@ -261,6 +249,9 @@ int ipts_hid_input_data(struct ipts_context *ipts, int buffer)
 		return -ENODEV;
 
 	header = (struct ipts_data_header *)ipts->resources.data[buffer].address;
+
+	if (!header)
+		return -EFAULT;
 
 	if (header->size == 0)
 		return 0;
@@ -305,7 +296,7 @@ int ipts_hid_input_data(struct ipts_context *ipts, int buffer)
 
 int ipts_hid_init(struct ipts_context *ipts, struct ipts_device_info info)
 {
-	int ret;
+	int ret = 0;
 
 	if (!ipts)
 		return -EFAULT;
@@ -315,8 +306,10 @@ int ipts_hid_init(struct ipts_context *ipts, struct ipts_device_info info)
 
 	ipts->hid = hid_allocate_device();
 	if (IS_ERR(ipts->hid)) {
-		dev_err(ipts->dev, "Failed to allocate HID device: %ld\n", PTR_ERR(ipts->hid));
-		return PTR_ERR(ipts->hid);
+		int err = PTR_ERR(ipts->hid);
+
+		dev_err(ipts->dev, "Failed to allocate HID device: %d\n", err);
+		return err;
 	}
 
 	ipts->hid->driver_data = ipts;
@@ -340,8 +333,16 @@ int ipts_hid_init(struct ipts_context *ipts, struct ipts_device_info info)
 	return 0;
 }
 
-void ipts_hid_free(struct ipts_context *ipts)
+int ipts_hid_free(struct ipts_context *ipts)
 {
+	if (!ipts)
+		return -EFAULT;
+
+	if (!ipts->hid)
+		return 0;
+
 	hid_destroy_device(ipts->hid);
 	ipts->hid = NULL;
+
+	return 0;
 }

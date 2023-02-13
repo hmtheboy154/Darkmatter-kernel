@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) 2016 Intel Corporation
- * Copyright (c) 2020-2022 Dorian Stoll
+ * Copyright (c) 2020-2023 Dorian Stoll
  *
  * Linux driver for Intel Precise Touch & Stylus
  */
@@ -33,7 +33,7 @@ static int ipts_resources_alloc_buffer(struct ipts_buffer *buffer, struct device
 
 static void ipts_resources_free_buffer(struct ipts_buffer *buffer)
 {
-	if (!buffer || !buffer->address)
+	if (!buffer->address)
 		return;
 
 	dma_free_coherent(buffer->device, buffer->size, buffer->address, buffer->dma_address);
@@ -47,19 +47,18 @@ static void ipts_resources_free_buffer(struct ipts_buffer *buffer)
 
 int ipts_resources_init(struct ipts_resources *res, struct device *dev, size_t ds, size_t fs)
 {
-	int ret;
-	int i = 0;
+	int ret = 0;
 
 	if (!res)
 		return -EFAULT;
-	
-	for (i = 0; i < IPTS_BUFFERS; i++) {
+
+	for (int i = 0; i < IPTS_BUFFERS; i++) {
 		ret = ipts_resources_alloc_buffer(&res->data[i], dev, ds);
 		if (ret)
 			goto err;
 	}
 
-	for (i = 0; i < IPTS_BUFFERS; i++) {
+	for (int i = 0; i < IPTS_BUFFERS; i++) {
 		ret = ipts_resources_alloc_buffer(&res->feedback[i], dev, fs);
 		if (ret)
 			goto err;
@@ -89,21 +88,21 @@ err:
 	return ret;
 }
 
-void ipts_resources_free(struct ipts_resources *res)
+int ipts_resources_free(struct ipts_resources *res)
 {
 	if (!res)
-		return;
+		return -EFAULT;
 
-	int i = 0;
-
-	for (i = 0; i < IPTS_BUFFERS; i++)
+	for (int i = 0; i < IPTS_BUFFERS; i++)
 		ipts_resources_free_buffer(&res->data[i]);
 
-	for (i = 0; i < IPTS_BUFFERS; i++)
+	for (int i = 0; i < IPTS_BUFFERS; i++)
 		ipts_resources_free_buffer(&res->feedback[i]);
 
 	ipts_resources_free_buffer(&res->doorbell);
 	ipts_resources_free_buffer(&res->workqueue);
 	ipts_resources_free_buffer(&res->hid2me);
 	ipts_resources_free_buffer(&res->descriptor);
+
+	return 0;
 }

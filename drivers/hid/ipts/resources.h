@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (c) 2016 Intel Corporation
- * Copyright (c) 2020-2022 Dorian Stoll
+ * Copyright (c) 2020-2023 Dorian Stoll
  *
  * Linux driver for Intel Precise Touch & Stylus
  */
@@ -34,6 +34,6 @@ struct ipts_resources {
 };
 
 int ipts_resources_init(struct ipts_resources *res, struct device *dev, size_t ds, size_t fs);
-void ipts_resources_free(struct ipts_resources *res);
+int ipts_resources_free(struct ipts_resources *res);
 
 #endif /* IPTS_RESOURCES_H */

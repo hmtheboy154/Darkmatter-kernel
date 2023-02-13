@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Copyright (c) 2016 Intel Corporation
- * Copyright (c) 2020-2022 Dorian Stoll
+ * Copyright (c) 2020-2023 Dorian Stoll
  *
  * Linux driver for Intel Precise Touch & Stylus
  */
@@ -17,15 +17,20 @@
 #include <linux/sched.h>
 #include <linux/types.h>
 
+#include "mei.h"
 #include "resources.h"
 #include "spec-device.h"
+#include "thread.h"
 
 struct ipts_context {
 	struct device *dev;
-	struct mei_cl_device *cldev;
+	struct ipts_mei mei;
 
 	enum ipts_mode mode;
 
+	/*
+	 * Prevents concurrent GET_FEATURE reports.
+	 */
 	struct mutex feature_lock;
 	struct completion feature_event;
 
@@ -40,8 +45,7 @@ struct ipts_context {
 	struct ipts_device_info info;
 	struct ipts_resources resources;
 
-	struct task_struct *event_loop;
-	struct task_struct *doorbell_loop;
+	struct ipts_thread receiver_loop;
 };
 
 #endif /* IPTS_CONTEXT_H */
