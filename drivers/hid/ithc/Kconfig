@@ -1,19 +1,12 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
-
 config HID_ITHC
 	tristate "Intel Touch Host Controller"
 	depends on PCI
 	depends on HID
 	help
-	  Say Y here if your system has a touchscreen using Intel
-	  Touch Host Controller (ITHC) technology.
+	  Say Y here if your system has a touchscreen using Intels
+	  Touch Host Controller (ITHC / IPTS) technology.
 
 	  If unsure say N.
 
 	  To compile this driver as a module, choose M here: the
-	  module will be called ipts.
-
-	  Building this driver alone will not give you a working touchscreen.
-	  It only exposed a userspace API that can be used by a daemon to
-	  receive and process data from the touchscreen hardware.
-
+	  module will be called ithc.
