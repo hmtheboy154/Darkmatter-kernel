@@ -48,17 +48,18 @@ static void ipts_resources_free_buffer(struct ipts_buffer *buffer)
 int ipts_resources_init(struct ipts_resources *res, struct device *dev, size_t ds, size_t fs)
 {
 	int ret = 0;
+	int i = 0;
 
 	if (!res)
 		return -EFAULT;
 
-	for (int i = 0; i < IPTS_BUFFERS; i++) {
+	for (i = 0; i < IPTS_BUFFERS; i++) {
 		ret = ipts_resources_alloc_buffer(&res->data[i], dev, ds);
 		if (ret)
 			goto err;
 	}
 
-	for (int i = 0; i < IPTS_BUFFERS; i++) {
+	for (i = 0; i < IPTS_BUFFERS; i++) {
 		ret = ipts_resources_alloc_buffer(&res->feedback[i], dev, fs);
 		if (ret)
 			goto err;
@@ -93,10 +94,12 @@ int ipts_resources_free(struct ipts_resources *res)
 	if (!res)
 		return -EFAULT;
 
-	for (int i = 0; i < IPTS_BUFFERS; i++)
+	int i = 0;
+
+	for (i = 0; i < IPTS_BUFFERS; i++)
 		ipts_resources_free_buffer(&res->data[i]);
 
-	for (int i = 0; i < IPTS_BUFFERS; i++)
+	for (i = 0; i < IPTS_BUFFERS; i++)
 		ipts_resources_free_buffer(&res->feedback[i]);
 
 	ipts_resources_free_buffer(&res->doorbell);
