@@ -1,3 +1,6 @@
 [submodule "KernelSU"]
 	path = KernelSU
 	url = https://github.com/tiann/KernelSU
+[submodule "linux-surface/ithc-linux"]
+	path = linux-surface/ithc-linux
+	url = https://github.com/quo/ithc-linux
