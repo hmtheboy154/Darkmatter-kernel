@@ -136,6 +136,7 @@
  * cost-wise, yet way more sensitive and accurate than periodic
  * sampling of the aggregate task states would be.
  */
+#include <trace/hooks/psi.h>
 
 static int psi_bug __read_mostly;
 
@@ -160,7 +161,6 @@ __setup("psi=", setup_psi);
 #define EXP_300s	2034		/* 1/exp(2s/300s) */
 
 /* PSI trigger definitions */
-#define WINDOW_MIN_US 500000	/* Min window size is 500ms */
 #define WINDOW_MAX_US 10000000	/* Max window size is 10s */
 #define UPDATES_PER_WINDOW 10	/* 10 updates per window */
 
@@ -551,6 +551,8 @@ static u64 update_triggers(struct psi_group *group, u64 now)
 		if (now < t->last_event_time + t->win.size)
 			continue;
 
+		trace_android_vh_psi_event(t);
+
 		/* Generate an event */
 		if (cmpxchg(&t->event, 0, 1) == 0)
 			wake_up_interruptible(&t->event_wait);
@@ -558,6 +560,8 @@ static u64 update_triggers(struct psi_group *group, u64 now)
 		/* Reset threshold breach flag once event got generated */
 		t->pending_event = false;
 	}
+
+	trace_android_vh_psi_group(group);
 
 	if (update_total)
 		memcpy(group->polling_total, total,
@@ -1254,8 +1258,7 @@ struct psi_trigger *psi_trigger_create(struct psi_group *group,
 	if (state >= PSI_NONIDLE)
 		return ERR_PTR(-EINVAL);
 
-	if (window_us < WINDOW_MIN_US ||
-		window_us > WINDOW_MAX_US)
+	if (window_us == 0 || window_us > WINDOW_MAX_US)
 		return ERR_PTR(-EINVAL);
 
 	/* Check threshold */
