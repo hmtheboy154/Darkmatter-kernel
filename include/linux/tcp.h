@@ -16,6 +16,7 @@
 
 #include <linux/skbuff.h>
 #include <linux/win_minmax.h>
+#include <linux/android_kabi.h>
 #include <net/sock.h>
 #include <net/inet_connection_sock.h>
 #include <net/inet_timewait_sock.h>
@@ -453,6 +454,8 @@ struct tcp_sock {
 
 /* Rerouting information */
 	u16	ecn_rehash;	/* PLB triggered rehash attempts */
+
+	ANDROID_KABI_RESERVE(1);
 };
 
 enum tsq_enum {
