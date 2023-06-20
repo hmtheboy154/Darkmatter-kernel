@@ -54,7 +54,7 @@ generate_header() {
 		sed -i '/^[[:space:]]*$/d; /^#/d; /\[abi_symbol_list\]/d' "${symbol_file}"
 
 		# Sort in byte order for kernel binary search at runtime
-		LC_ALL=C sort -o "${symbol_file}" "${symbol_file}"
+		LC_ALL=C sort -u -o "${symbol_file}" "${symbol_file}"
 
 		# Trim white spaces & +1 for null termination
 		local max_name_len=$(awk '
@@ -100,7 +100,10 @@ if [ "$(basename "${TARGET}")" = "gki_module_unprotected.h" ]; then
 	generate_header "${TARGET}" "${GKI_VENDOR_SYMBOLS}" "unprotected"
 else
 	# Sorted list of exported symbols
-	GKI_EXPORTED_SYMBOLS="${SYMBOL_LIST}"
+	GKI_EXPORTED_SYMBOLS="${objtree}/protected_exports"
+
+	# Make a temp copy to avoid changing source during pre-processing
+	cp -f "${SYMBOL_LIST}" "${GKI_EXPORTED_SYMBOLS}"
 
 	generate_header "${TARGET}" "${GKI_EXPORTED_SYMBOLS}" "protected_exports"
 fi
