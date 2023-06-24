@@ -17,6 +17,7 @@ Used to be a place for PhoenixOS Darkmatter kernel, nowadays the legacy lives on
 - *-xanmod : Using patches from [xanmod](https://xanmod.org/) (from umbral xanmod patches is included by default)
 - *-nongoogle : Not using patches from Google's [Android Common Kernel](https://android.googlesource.com/kernel/common/) (aka Google LTS)
 - *-surface : Using patches from [linux-surface](https://github.com/linux-surface)
+- *-jupiter : Using patches from Valve for the Steam Deck, currently I use [unofficial mirror](https://gitlab.com/evlaV/linux-integration)
 
 ## Why do you name the kernel like this ?
 The name are based on names from [Honkai Impact 3rd](https://honkaiimpact3.hoyoverse.com/). At first the kernel are giving pretty random names (chariot/comet/benares/sakura). But starting from 5.10 (`pledge`), I decided to use battlesuits name instead.
