@@ -7341,13 +7341,17 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu, int sy
 	if (new_cpu != INT_MAX)
 		return new_cpu;
 
+	sync_entity_load_avg(&p->se);
+
 	rcu_read_lock();
 	pd = rcu_dereference(rd->pd);
 	if (!pd || READ_ONCE(rd->overutilized))
 		goto unlock;
 
 	cpu = smp_processor_id();
-	if (sync && cpumask_test_cpu(cpu, p->cpus_ptr)) {
+	if (sync && cpu_rq(cpu)->nr_running == 1 &&
+	    cpumask_test_cpu(cpu, p->cpus_ptr) &&
+	    task_fits_cpu(p, cpu)) {
 		rcu_read_unlock();
 		return cpu;
 	}
@@ -7364,7 +7368,6 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu, int sy
 
 	target = prev_cpu;
 
-	sync_entity_load_avg(&p->se);
 	if (!uclamp_task_util(p, p_util_min, p_util_max))
 		goto unlock;
 
