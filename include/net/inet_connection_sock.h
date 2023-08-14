@@ -140,8 +140,7 @@ struct inet_connection_sock {
 
 	ANDROID_KABI_RESERVE(1);
 
-/* XXX inflated by temporary internal debugging info */
-	u64			  icsk_ca_priv[224 / sizeof(u64)];
+	u64			  icsk_ca_priv[104 / sizeof(u64)];
 #define ICSK_CA_PRIV_SIZE	  sizeof_field(struct inet_connection_sock, icsk_ca_priv)
 };
 
