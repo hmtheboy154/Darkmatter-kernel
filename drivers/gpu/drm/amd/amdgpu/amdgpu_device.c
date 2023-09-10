@@ -4058,6 +4058,7 @@ int amdgpu_device_suspend(struct drm_device *dev, bool fbcon)
 		amdgpu_fbdev_set_suspend(adev, 1);
 
 	cancel_delayed_work_sync(&adev->delayed_init_work);
+	flush_delayed_work(&adev->gfx.gfx_off_delay_work);
 
 	amdgpu_ras_suspend(adev);
 
