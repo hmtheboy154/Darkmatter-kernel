@@ -48,6 +48,20 @@ static const struct config_entry config_table[] = {
 		},
 	},
 	{
+		.flags = FLAG_AMD_LEGACY,
+		.device = ACP_PCI_DEV_ID,
+		.dmi_table = (const struct dmi_system_id []) {
+			{
+				.matches = {
+					DMI_MATCH(DMI_SYS_VENDOR, "Valve"),
+					DMI_MATCH(DMI_PRODUCT_NAME, "Jupiter"),
+					DMI_MATCH(DMI_PRODUCT_FAMILY, "Aerith"),
+				},
+			},
+			{}
+		},
+	},
+	{
 		.flags = FLAG_AMD_SOF,
 		.device = ACP_PCI_DEV_ID,
 		.dmi_table = (const struct dmi_system_id []) {

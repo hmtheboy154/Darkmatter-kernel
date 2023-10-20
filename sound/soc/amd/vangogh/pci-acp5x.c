@@ -13,6 +13,7 @@
 #include <linux/pm_runtime.h>
 
 #include "acp5x.h"
+#include "../mach-config.h"
 
 struct acp5x_dev_data {
 	void __iomem *acp5x_base;
@@ -131,7 +132,7 @@ static int snd_acp5x_probe(struct pci_dev *pci,
 
 	/* Return if acp config flag is defined */
 	flag = snd_amd_acp_find_config(pci);
-	if (flag)
+	if (flag != FLAG_AMD_LEGACY)
 		return -ENODEV;
 
 	irqflags = IRQF_SHARED;
