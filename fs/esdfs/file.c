@@ -455,10 +455,11 @@ const struct file_operations esdfs_main_fops = {
 };
 
 /* trimmed directory options */
+WRAP_DIR_ITER(esdfs_readdir) // FIXME!
 const struct file_operations esdfs_dir_fops = {
 	.llseek		= esdfs_file_llseek,
 	.read		= generic_read_dir,
-	.iterate	= esdfs_readdir,
+	.iterate_shared	= shared_esdfs_readdir,
 	.unlocked_ioctl	= esdfs_unlocked_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= esdfs_compat_ioctl,
