@@ -515,7 +515,7 @@ static int esdfs_getattr(struct user_namespace *mnt_userns,
 	lower_inode = esdfs_lower_inode(inode);
 	esdfs_copy_attr(inode, lower_inode);
 	fsstack_copy_inode_size(inode, lower_inode);
-	generic_fillattr(idmap, inode, stat);
+	generic_fillattr(idmap, request_mask, inode, stat);
 
 	stat->blocks = lower_stat.blocks;
 
