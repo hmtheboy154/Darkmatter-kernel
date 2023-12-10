@@ -2,13 +2,13 @@
 Used to be a place for PhoenixOS Darkmatter kernel, nowadays the legacy lives on with other Android-x86 distributions
 
 ## Which codename is which version ?
-- chariot : 4.9
-- comet : 4.14
-- benares : 4.19
-- sakura : 5.4 / 5.5
-- pledge : 5.10
-- umbral : 5.15
-- gloria : 6.1
+- [chariot](https://honkaiimpact3.hoyoverse.com/global/en-us/valkyries/106477/106395) : 4.9
+- [comet](https://honkaiimpact3.hoyoverse.com/global/en-us/valkyries/106478/106399) : 4.14
+- [benares](https://honkaiimpact3.fandom.com/wiki/Benares) : 4.19
+- [sakura](https://honkaiimpact3.fandom.com/wiki/Yae_Sakura) : 5.4 / 5.5
+- [pledge](https://honkaiimpact3.hoyoverse.com/global/en-us/valkyries/106473/106391) : 5.10
+- [umbral](https://honkaiimpact3.hoyoverse.com/global/en-us/valkyries/106470/106387) : 5.15
+- [gloria](https://honkaiimpact3.hoyoverse.com/global/en-us/valkyries/106467/106385) : 6.1
 
 ## What are those names that comes after it ?
 - comet-gpd1 : 4.14 with some fixes for GPD Win 1
