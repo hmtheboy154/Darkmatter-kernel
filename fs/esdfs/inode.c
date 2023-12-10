@@ -119,7 +119,8 @@ static int esdfs_unlink(struct inode *dir, struct dentry *dentry)
 	fsstack_copy_inode_size(dir, lower_dir_inode);
 	set_nlink(dentry->d_inode,
 		  esdfs_lower_inode(dentry->d_inode)->i_nlink);
-	dentry->d_inode->i_ctime = dir->i_ctime;
+//	dentry->d_inode->i_ctime = dir->i_ctime;
+	inode_set_ctime_to_ts(dentry->d_inode, inode_get_ctime(dir));
 	d_drop(dentry); /* this is needed, else LTP fails (VFS won't do it) */
 out:
 	unlock_dir(lower_dir_dentry);
@@ -484,7 +485,7 @@ out:
 	return err;
 }
 
-static int esdfs_getattr(struct user_namespace *mnt_userns, 
+static int esdfs_getattr(struct mnt_idmap *idmap, 
 			 const struct path *path, struct kstat *stat,
 			 u32 request_mask, unsigned int flags)
 {
