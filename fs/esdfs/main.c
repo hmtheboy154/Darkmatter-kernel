@@ -16,6 +16,7 @@
 #include <linux/parser.h>
 #include <linux/security.h>
 #include <linux/proc_ns.h>
+#include <linux/proc_fs.h>
 
 /*
  * Derived from first generation "ANDROID_EMU" glue in modifed F2FS driver.
@@ -154,20 +155,21 @@ static inline struct user_namespace *to_user_ns(struct ns_common *ns)
 
 static struct user_namespace *get_ns_from_fd(int fd)
 {
-	struct file *file;
-	struct ns_common *ns;
+	struct fd f = fdget(fd);
 	struct user_namespace *user_ns = ERR_PTR(-EINVAL);
 
-	file = proc_ns_fget(fd);
-	if (IS_ERR(file))
-		return ERR_CAST(file);
+	if (!f.file)
+		return ERR_PTR(-EBADF);
 
-	ns = get_proc_ns(file_inode(file));
+	if (proc_ns_file(f.file)) {
+		struct ns_common *ns = get_proc_ns(file_inode(f.file));
 #ifdef CONFIG_USER_NS
-	if (ns->ops == &userns_operations)
-		user_ns = to_user_ns(ns);
+		if (ns->ops == &userns_operations)
+			user_ns = to_user_ns(ns);
 #endif
-	fput(file);
+	}
+	fdput(f);
+
 	return user_ns;
 }
 
