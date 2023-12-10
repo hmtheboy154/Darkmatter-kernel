@@ -485,6 +485,14 @@ out:
 	return err;
 }
 
+static int esdfs_do_getattr(const struct path *path, struct kstat *stat,
+			       u32 request_mask, unsigned int flags)
+{
+	if (flags & AT_GETATTR_NOSEC)
+		return vfs_getattr_nosec(path, stat, request_mask, flags);
+	return vfs_getattr(path, stat, request_mask, flags);
+}
+
 static int esdfs_getattr(struct mnt_idmap *idmap, 
 			 const struct path *path, struct kstat *stat,
 			 u32 request_mask, unsigned int flags)
@@ -509,7 +517,7 @@ static int esdfs_getattr(struct mnt_idmap *idmap,
 	esdfs_get_lower_path(dentry, &lower_path);
 
 	/* We need the lower getattr to calculate stat->blocks for us. */
-	err = vfs_getattr(&lower_path, &lower_stat, request_mask, flags);
+	err = esdfs_do_getattr(&lower_path, &lower_stat, request_mask, flags);
 	if (err)
 		goto out;
 
