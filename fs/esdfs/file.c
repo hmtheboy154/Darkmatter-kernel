@@ -450,7 +450,7 @@ const struct file_operations esdfs_main_fops = {
 	.fasync		= esdfs_fasync,
 	.read_iter	= esdfs_read_iter,
 	.write_iter	= esdfs_write_iter,
-	.splice_read    = generic_file_splice_read,
+	.splice_read    = filemap_splice_read,
 	.splice_write   = iter_file_splice_write,
 };
 
