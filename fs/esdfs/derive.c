@@ -17,6 +17,7 @@
 #include <linux/hashtable.h>
 #include <linux/syscalls.h>
 #include <linux/fcntl.h>
+#include <linux/filelock.h>
 #include <linux/ctype.h>
 #include <linux/vmalloc.h>
 #include <linux/security.h>
