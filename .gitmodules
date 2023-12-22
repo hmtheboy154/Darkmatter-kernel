@@ -1,3 +1,9 @@
 [submodule "KernelSU"]
 	path = KernelSU
 	url = https://github.com/tiann/KernelSU
+[submodule "linux-surface/intel-precise-touch"]
+	path = linux-surface/intel-precise-touch
+	url = https://github.com/linux-surface/intel-precise-touch
+[submodule "linux-surface/ithc-linux"]
+	path = linux-surface/ithc-linux
+	url = https://github.com/quo/ithc-linux
