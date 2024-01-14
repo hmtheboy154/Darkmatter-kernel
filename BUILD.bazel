@@ -12,6 +12,7 @@ load(
     "android_filegroup",
     "checkpatch",
     "ddk_headers",
+    "kernel_abi",
     "kernel_build",
     "kernel_images",
     "kernel_modules_install",
@@ -102,16 +103,21 @@ filegroup(
     name = "aarch64_additional_kmi_symbol_lists",
     srcs = [
         # keep sorted
+        "android/abi_gki_aarch64_amlogic",
+        "android/abi_gki_aarch64_db845c",
+        "android/abi_gki_aarch64_pixel",
+        "android/abi_gki_aarch64_unisoc",
+        "android/abi_gki_aarch64_virtual_device",
     ],
     visibility = ["//visibility:public"],
 )
 
 define_common_kernels(target_configs = {
     "kernel_aarch64": {
-        "kmi_symbol_list_strict_mode": False,
+        "kmi_symbol_list_strict_mode": True,
         "kmi_symbol_list": "android/abi_gki_aarch64",
         "additional_kmi_symbol_lists": [":aarch64_additional_kmi_symbol_lists"],
-        "trim_nonlisted_kmi": False,
+        "trim_nonlisted_kmi": True,
         "protected_exports_list": "android/abi_gki_protected_exports_aarch64",
         "protected_modules_list": "android/gki_aarch64_protected_modules",
         "module_implicit_outs": get_gki_modules_list("arm64"),
@@ -425,6 +431,8 @@ kernel_build(
     # Enable mixed build.
     base_kernel = ":kernel_aarch64",
     build_config = "build.config.db845c",
+    collect_unstripped_modules = True,
+    kmi_symbol_list = "android/abi_gki_aarch64_db845c",
     make_goals = [
         "modules",
         "qcom/sdm845-db845c.dtb",
@@ -462,6 +470,11 @@ alias(
         "//build/kernel/kleaf:kgdb_is_true": "db845c_with_kgdb",
         "//conditions:default": "db845c_no_kgdb",
     }),
+)
+
+kernel_abi(
+    name = "db845c_abi",
+    kernel_build = ":db845c",
 )
 
 kernel_modules_install(
@@ -2170,4 +2183,18 @@ zip_archive(
     name = "tests_zip_arm64",
     srcs = [":kselftest_tests_arm64"],
     out = "tests.zip",
+)
+
+copy_to_dist_dir(
+    name = "tests_zip_x86_64_dist",
+    data = [":tests_zip_x86_64"],
+    dist_dir = "out/tests_x86_64/dist",
+    flat = True,
+)
+
+copy_to_dist_dir(
+    name = "tests_zip_arm64_dist",
+    data = [":tests_zip_arm64"],
+    dist_dir = "out/tests_arm64/dist",
+    flat = True,
 )
