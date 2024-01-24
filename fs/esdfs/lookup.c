@@ -202,10 +202,8 @@ struct inode *esdfs_iget(struct super_block *sb, struct inode *lower_inode,
 
 	inode->i_mapping->a_ops = &esdfs_aops;
 
-	inode->i_atime.tv_sec = 0;
-	inode->i_atime.tv_nsec = 0;
-	inode->i_mtime.tv_sec = 0;
-	inode->i_mtime.tv_nsec = 0;
+	inode_set_atime(inode, 0, 0);
+	inode_set_mtime(inode, 0, 0);
 	inode_set_ctime(inode, 0, 0);
 
 	/* properly initialize special inodes */
