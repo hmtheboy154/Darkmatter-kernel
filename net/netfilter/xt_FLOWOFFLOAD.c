@@ -615,7 +615,7 @@ static struct notifier_block flow_offload_netdev_notifier = {
 };
 
 static int nf_flow_rule_route_inet(struct net *net,
-				   const struct flow_offload *flow,
+				   struct flow_offload *flow,
 				   enum flow_offload_tuple_dir dir,
 				   struct nf_flow_rule *flow_rule)
 {
@@ -651,6 +651,7 @@ static int init_flowtable(struct xt_flowoffload_table *tbl)
 {
 	INIT_DELAYED_WORK(&tbl->work, xt_flowoffload_hook_work);
 	tbl->ft.type = &flowtable_inet;
+	tbl->ft.flags = NF_FLOWTABLE_COUNTER;
 
 	return nf_flow_table_init(&tbl->ft);
 }
@@ -669,7 +670,7 @@ static int __init xt_flowoffload_tg_init(void)
 	if (ret)
 		goto cleanup;
 
-	flowtable[1].ft.flags = NF_FLOWTABLE_HW_OFFLOAD;
+	flowtable[1].ft.flags |= NF_FLOWTABLE_HW_OFFLOAD;
 
 	ret = xt_register_target(&offload_tg_reg);
 	if (ret)
