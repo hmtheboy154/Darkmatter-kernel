@@ -379,9 +379,11 @@ static irqreturn_t cs35l41_irq(int irq, void *data)
 
 	ret = pm_runtime_resume_and_get(cs35l41->dev);
 	if (ret < 0) {
+		/*
 		dev_err(cs35l41->dev,
 			"pm_runtime_resume_and_get failed in %s: %d\n",
 			__func__, ret);
+		*/
 		return IRQ_NONE;
 	}
 
