@@ -351,7 +351,7 @@
   _dev_notice
   dev_pm_domain_attach_by_name
   dev_pm_domain_detach
-  dev_pm_opp_add
+  dev_pm_opp_add_dynamic
   dev_pm_opp_clear_config
   dev_pm_opp_disable
   dev_pm_opp_find_freq_ceil
@@ -1599,6 +1599,7 @@
   spi_register_controller
   __spi_register_driver
   spi_setup
+  spi_slave_abort
   spi_sync
   spi_sync_locked
   spi_unregister_controller

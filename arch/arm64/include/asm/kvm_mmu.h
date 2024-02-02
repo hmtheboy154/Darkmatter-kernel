@@ -119,6 +119,7 @@ alternative_cb_end
 #include <asm/mmu_context.h>
 #include <asm/kvm_emulate.h>
 #include <asm/kvm_host.h>
+#include <asm/kvm_pkvm_module.h>
 
 void kvm_update_va_mask(struct alt_instr *alt,
 			__le32 *origptr, __le32 *updptr, int nr_inst);
@@ -194,8 +195,13 @@ static inline void *__kvm_vector_slot2addr(void *base,
 
 struct kvm;
 
-#define kvm_flush_dcache_to_poc(a,l)	\
-	dcache_clean_inval_poc((unsigned long)(a), (unsigned long)(a)+(l))
+#define kvm_flush_dcache_to_poc(a, l)	do {			\
+	unsigned long __a = (unsigned long)(a);			\
+	unsigned long __l = (unsigned long)(l);			\
+								\
+	if (__l)						\
+		dcache_clean_inval_poc(__a, __a + __l);		\
+} while (0)
 
 static inline bool vcpu_has_cache_enabled(struct kvm_vcpu *vcpu)
 {

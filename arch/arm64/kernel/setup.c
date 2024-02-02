@@ -41,6 +41,7 @@
 #include <asm/elf.h>
 #include <asm/cpufeature.h>
 #include <asm/cpu_ops.h>
+#include <asm/hypervisor.h>
 #include <asm/kasan.h>
 #include <asm/numa.h>
 #include <asm/scs.h>
@@ -51,6 +52,7 @@
 #include <asm/tlbflush.h>
 #include <asm/traps.h>
 #include <asm/efi.h>
+#include <asm/hypervisor.h>
 #include <asm/xen/hypervisor.h>
 #include <asm/mmu_context.h>
 
@@ -457,3 +459,10 @@ static int __init check_mmu_enabled_at_boot(void)
 	return 0;
 }
 device_initcall_sync(check_mmu_enabled_at_boot);
+
+void kvm_arm_init_hyp_services(void)
+{
+	kvm_init_ioremap_services();
+	kvm_init_memshare_services();
+	kvm_init_memrelinquish_services();
+}
