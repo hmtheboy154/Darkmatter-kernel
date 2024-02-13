@@ -730,8 +730,13 @@ enum kvm_pgtable_prot kvm_pgtable_stage2_pte_prot(kvm_pte_t pte)
 	return prot;
 }
 
-static bool stage2_pte_needs_update(kvm_pte_t old, kvm_pte_t new)
+static bool stage2_pte_needs_update(struct kvm_pgtable *pgt,
+				    kvm_pte_t old, kvm_pte_t new)
 {
+	/* Following filter logic applies only to guest stage-2 entries. */
+	if (pgt->flags & KVM_PGTABLE_S2_IDMAP)
+		return true;
+
 	if (!kvm_pte_valid(old) || !kvm_pte_valid(new))
 		return true;
 
@@ -912,6 +917,7 @@ static int stage2_map_walker_try_leaf(const struct kvm_pgtable_visit_ctx *ctx,
 	struct kvm_pgtable *pgt = data->mmu->pgt;
 	struct kvm_pgtable_mm_ops *mm_ops = ctx->mm_ops;
 	struct kvm_pgtable_pte_ops *pte_ops = pgt->pte_ops;
+	bool old_is_counted;
 
 	if (!stage2_leaf_mapping_allowed(ctx, data))
 		return -E2BIG;
@@ -921,20 +927,32 @@ static int stage2_map_walker_try_leaf(const struct kvm_pgtable_visit_ctx *ctx,
 	else
 		new = data->annotation;
 
-	if (pte_ops->pte_is_counted_cb(ctx->old, ctx->level)) {
+	old_is_counted = pte_ops->pte_is_counted_cb(ctx->old, ctx->level);
+	if (old_is_counted) {
 		/*
-		 * Skip updating the PTE if we are trying to recreate the exact
-		 * same mapping or only change the access permissions. Instead,
-		 * the vCPU will exit one more time from guest if still needed
-		 * and then go through the path of relaxing permissions.
+		 * Skip updating a guest PTE if we are trying to recreate the
+		 * exact same mapping or change only the access permissions.
+		 * Instead, the vCPU will exit one more time from the guest if
+		 * still needed and then go through the path of relaxing
+		 * permissions. This applies only to guest PTEs; Host PTEs
+		 * are unconditionally updated. The host cannot livelock
+		 * because the abort handler has done prior checks before
+		 * calling here.
 		 */
-		if (!stage2_pte_needs_update(ctx->old, new))
+		if (!stage2_pte_needs_update(pgt, ctx->old, new))
 			return -EAGAIN;
 	}
 
 	/* If we're only changing software bits, then store them and go! */
 	if (!kvm_pgtable_walk_shared(ctx) &&
 	    !((ctx->old ^ new) & ~KVM_PTE_LEAF_ATTR_HI_SW)) {
+		if (old_is_counted !=
+		    pte_ops->pte_is_counted_cb(new, ctx->level)) {
+			if (old_is_counted)
+				mm_ops->put_page(ctx->ptep);
+			else
+				mm_ops->get_page(ctx->ptep);
+		}
 		WRITE_ONCE(*ctx->ptep, new);
 		return 0;
 	}
@@ -975,10 +993,38 @@ static int stage2_map_walk_table_pre(const struct kvm_pgtable_visit_ctx *ctx,
 	return 0;
 }
 
+static void stage2_map_prefault_idmap(struct kvm_pgtable_pte_ops *pte_ops,
+				      const struct kvm_pgtable_visit_ctx *ctx,
+				      kvm_pte_t *ptep)
+{
+	kvm_pte_t block_pte = ctx->old;
+	u64 pa, granule;
+	int i;
+
+	WARN_ON(pte_ops->pte_is_counted_cb(block_pte, ctx->level));
+
+	if (!kvm_pte_valid(block_pte))
+		return;
+
+	pa = ALIGN_DOWN(ctx->addr, kvm_granule_size(ctx->level));
+	granule = kvm_granule_size(ctx->level + 1);
+	for (i = 0; i < PTRS_PER_PTE; ++i, ++ptep, pa += granule) {
+		kvm_pte_t pte = kvm_init_valid_leaf_pte(
+			pa, block_pte, ctx->level + 1);
+		/* Skip ptes in the range being modified by the caller. */
+		if ((pa < ctx->addr) || (pa >= ctx->end)) {
+			/* We can write non-atomically: ptep isn't yet live. */
+			*ptep = pte;
+		}
+	}
+}
+
 static int stage2_map_walk_leaf(const struct kvm_pgtable_visit_ctx *ctx,
 				struct stage2_map_data *data)
 {
 	struct kvm_pgtable_mm_ops *mm_ops = ctx->mm_ops;
+	struct kvm_pgtable *pgt = data->mmu->pgt;
+	struct kvm_pgtable_pte_ops *pte_ops = pgt->pte_ops;
 	kvm_pte_t *childp, new;
 	int ret;
 
@@ -995,6 +1041,10 @@ static int stage2_map_walk_leaf(const struct kvm_pgtable_visit_ctx *ctx,
 	childp = mm_ops->zalloc_page(data->memcache);
 	if (!childp)
 		return -ENOMEM;
+
+	if (pgt->flags & KVM_PGTABLE_S2_IDMAP) {
+		stage2_map_prefault_idmap(pte_ops, ctx, childp);
+	}
 
 	if (!stage2_try_break_pte(ctx, data->mmu)) {
 		mm_ops->put_page(childp);

@@ -16,6 +16,8 @@
 #![feature(coerce_unsized)]
 #![feature(dispatch_from_dyn)]
 #![feature(new_uninit)]
+#![feature(offset_of)]
+#![feature(ptr_metadata)]
 #![feature(receiver_trait)]
 #![feature(unsize)]
 
@@ -32,6 +34,7 @@ extern crate self as kernel;
 mod allocator;
 mod build_assert;
 pub mod error;
+pub mod file;
 pub mod init;
 pub mod ioctl;
 #[cfg(CONFIG_KUNIT)]
@@ -44,7 +47,9 @@ pub mod std_vendor;
 pub mod str;
 pub mod sync;
 pub mod task;
+pub mod time;
 pub mod types;
+pub mod workqueue;
 
 #[doc(hidden)]
 pub use bindings;

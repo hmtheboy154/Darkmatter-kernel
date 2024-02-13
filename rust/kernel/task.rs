@@ -2,10 +2,28 @@
 
 //! Tasks (threads and processes).
 //!
-//! C header: [`include/linux/sched.h`](../../../../include/linux/sched.h).
+//! C header: [`include/linux/sched.h`](srctree/include/linux/sched.h).
 
-use crate::{bindings, types::Opaque};
-use core::{marker::PhantomData, ops::Deref, ptr};
+use crate::{
+    bindings,
+    types::{NotThreadSafe, Opaque},
+};
+use core::{
+    ffi::{c_int, c_long, c_uint},
+    ops::Deref,
+    ptr,
+};
+
+/// A sentinel value used for infinite timeouts.
+pub const MAX_SCHEDULE_TIMEOUT: c_long = c_long::MAX;
+
+/// Bitmask for tasks that are sleeping in an interruptible state.
+pub const TASK_INTERRUPTIBLE: c_int = bindings::TASK_INTERRUPTIBLE as c_int;
+/// Bitmask for tasks that are sleeping in an uninterruptible state.
+pub const TASK_UNINTERRUPTIBLE: c_int = bindings::TASK_UNINTERRUPTIBLE as c_int;
+/// Convenience constant for waking up tasks regardless of whether they are in interruptible or
+/// uninterruptible sleep.
+pub const TASK_NORMAL: c_uint = bindings::TASK_NORMAL as c_uint;
 
 /// Returns the currently running task.
 #[macro_export]
@@ -79,10 +97,19 @@ unsafe impl Sync for Task {}
 type Pid = bindings::pid_t;
 
 impl Task {
+    /// Returns a raw pointer to the current task.
+    ///
+    /// It is up to the user to use the pointer correctly.
+    #[inline]
+    pub fn current_raw() -> *mut bindings::task_struct {
+        // SAFETY: Getting the current pointer is always safe.
+        unsafe { bindings::get_current() }
+    }
+
     /// Returns a task reference for the currently executing task/thread.
     ///
     /// The recommended way to get the current task/thread is to use the
-    /// [`current`](crate::current) macro because it is safe.
+    /// [`current`] macro because it is safe.
     ///
     /// # Safety
     ///
@@ -90,7 +117,7 @@ impl Task {
     pub unsafe fn current() -> impl Deref<Target = Task> {
         struct TaskRef<'a> {
             task: &'a Task,
-            _not_send: PhantomData<*mut ()>,
+            _not_send: NotThreadSafe,
         }
 
         impl Deref for TaskRef<'_> {
@@ -101,15 +128,13 @@ impl Task {
             }
         }
 
-        // SAFETY: Just an FFI call with no additional safety requirements.
-        let ptr = unsafe { bindings::get_current() };
-
+        let current = Task::current_raw();
         TaskRef {
             // SAFETY: If the current thread is still running, the current task is valid. Given
             // that `TaskRef` is not `Send`, we know it cannot be transferred to another thread
             // (where it could potentially outlive the caller).
-            task: unsafe { &*ptr.cast() },
-            _not_send: PhantomData,
+            task: unsafe { &*current.cast() },
+            _not_send: NotThreadSafe,
         }
     }
 
