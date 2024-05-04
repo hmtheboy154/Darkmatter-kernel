@@ -59,6 +59,8 @@
 
 #include <trace/hooks/sched.h>
 
+EXPORT_TRACEPOINT_SYMBOL_GPL(sched_stat_runtime);
+
 /*
  * Targeted preemption latency for CPU-bound tasks:
  *
@@ -7670,6 +7672,12 @@ unsigned long cpu_util_cfs(int cpu)
 
 unsigned long cpu_util_cfs_boost(int cpu)
 {
+	unsigned long util = INT_MAX;
+
+	trace_android_rvh_cpu_util_cfs_boost(cpu, &util);
+	if (util != INT_MAX)
+		return util;
+
 	return cpu_util(cpu, NULL, -1, 1);
 }
 
@@ -7872,6 +7880,11 @@ static int find_energy_efficient_cpu(struct task_struct *p, int prev_cpu, int sy
 	struct sched_domain *sd;
 	struct perf_domain *pd;
 	struct energy_env eenv;
+	int new_cpu = INT_MAX;
+
+	trace_android_rvh_find_energy_efficient_cpu(p, prev_cpu, sync, &new_cpu);
+	if (new_cpu != INT_MAX)
+		return new_cpu;
 
 	sync_entity_load_avg(&p->se);
 

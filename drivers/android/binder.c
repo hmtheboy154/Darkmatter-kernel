@@ -79,6 +79,7 @@
 
 #include "binder_internal.h"
 #include "binder_trace.h"
+#include "binder_pick_impl.h"
 #include <trace/hooks/binder.h>
 
 static HLIST_HEAD(binder_deferred_list);
@@ -484,6 +485,16 @@ binder_enqueue_thread_work_ilocked(struct binder_thread *thread,
 {
 	WARN_ON(!list_empty(&thread->waiting_thread_node));
 	binder_enqueue_work_ilocked(work, &thread->todo);
+
+	/* (e)poll-based threads require an explicit wakeup signal when
+	 * queuing their own work; they rely on these events to consume
+	 * messages without I/O block. Without it, threads risk waiting
+	 * indefinitely without handling the work.
+	 */
+	if (thread->looper & BINDER_LOOPER_STATE_POLL &&
+	    thread->pid == current->pid && !thread->process_todo)
+		wake_up_interruptible_sync(&thread->wait);
+
 	thread->process_todo = true;
 }
 
@@ -3182,6 +3193,7 @@ static void binder_transaction(struct binder_proc *proc,
 		target_proc = target_thread->proc;
 		target_proc->tmp_ref++;
 		binder_inner_proc_unlock(target_thread->proc);
+		trace_android_vh_binder_reply(target_proc, proc, thread, tr);
 	} else {
 		if (tr->target.handle) {
 			struct binder_ref *ref;
@@ -3244,6 +3256,7 @@ static void binder_transaction(struct binder_proc *proc,
 			return_error_line = __LINE__;
 			goto err_invalid_target_handle;
 		}
+		trace_android_vh_binder_trans(target_proc, proc, thread, tr);
 		if (security_binder_transaction(proc->cred,
 						target_proc->cred) < 0) {
 			binder_txn_error("%d:%d transaction credentials failed\n",
@@ -5868,7 +5881,7 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	}
 	hlist_add_head(&proc->proc_node, &binder_procs);
 	mutex_unlock(&binder_procs_lock);
-
+	trace_android_vh_binder_preset(&binder_procs, &binder_procs_lock);
 	if (binder_debugfs_dir_entry_proc && !existing_pid) {
 		char strbuf[11];
 
@@ -6771,6 +6784,10 @@ static int __init binder_init(void)
 	struct hlist_node *tmp;
 	char *device_names = NULL;
 	const struct binder_debugfs_entry *db_entry;
+
+	if (binder_use_rust)
+		return 0;
+	binder_driver_initialized = true;
 
 	ret = binder_alloc_shrinker_init();
 	if (ret)

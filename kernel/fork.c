@@ -130,6 +130,7 @@ extern int unprivileged_userns_clone;
 #define MAX_THREADS FUTEX_TID_MASK
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(task_newtask);
+EXPORT_TRACEPOINT_SYMBOL_GPL(task_rename);
 
 /*
  * Protected counters by write_lock_irq(&tasklist_lock)
@@ -2735,6 +2736,7 @@ __latent_entropy struct task_struct *copy_process(
 		attach_pid(p, PIDTYPE_PID);
 		nr_threads++;
 	}
+	trace_android_vh_copy_process(current, nr_threads);
 	total_forks++;
 	hlist_del_init(&delayed.node);
 	spin_unlock(&current->sighand->siglock);

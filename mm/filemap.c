@@ -36,6 +36,7 @@
 #include <linux/cpuset.h>
 #include <linux/hugetlb.h>
 #include <linux/memcontrol.h>
+#include <linux/cleancache.h>
 #include <linux/shmem_fs.h>
 #include <linux/rmap.h>
 #include <linux/delayacct.h>
@@ -123,6 +124,10 @@
  *    ->private_lock		(zap_pte_range->block_dirty_folio)
  */
 
+/* Export tracepoints that act as a bare tracehook */
+EXPORT_TRACEPOINT_SYMBOL_GPL(mm_filemap_delete_from_page_cache);
+EXPORT_TRACEPOINT_SYMBOL_GPL(mm_filemap_add_to_page_cache);
+
 static void page_cache_delete(struct address_space *mapping,
 				   struct folio *folio, void *shadow)
 {
@@ -151,6 +156,16 @@ static void filemap_unaccount_folio(struct address_space *mapping,
 		struct folio *folio)
 {
 	long nr;
+
+	/*
+	 * if we're uptodate, flush out into the cleancache, otherwise
+	 * invalidate any existing cleancache entries.  We can't leave
+	 * stale data around in the cleancache once our page is gone
+	 */
+	if (folio_test_uptodate(folio) && folio_test_mappedtodisk(folio))
+		cleancache_put_page(&folio->page);
+	else
+		cleancache_invalidate_page(mapping, &folio->page);
 
 	VM_BUG_ON_FOLIO(folio_mapped(folio), folio);
 	if (!IS_ENABLED(CONFIG_DEBUG_VM) && unlikely(folio_mapped(folio))) {

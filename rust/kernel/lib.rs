@@ -44,10 +44,12 @@ pub mod kunit;
 pub mod list;
 pub mod mm;
 pub mod page;
+pub mod page_range;
 pub mod prelude;
 pub mod print;
 pub mod rbtree;
 pub mod security;
+pub mod seq_file;
 mod static_assert;
 #[doc(hidden)]
 pub mod std_vendor;
@@ -99,6 +101,13 @@ impl ThisModule {
     /// The pointer must be equal to the right `THIS_MODULE`.
     pub const unsafe fn from_ptr(ptr: *mut bindings::module) -> ThisModule {
         ThisModule(ptr)
+    }
+
+    /// Access the raw pointer for this module.
+    ///
+    /// It is up to the user to use it correctly.
+    pub const fn as_ptr(&self) -> *mut bindings::module {
+        self.0
     }
 }
 

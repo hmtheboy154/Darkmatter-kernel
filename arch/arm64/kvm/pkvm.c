@@ -15,14 +15,20 @@
 #include <linux/of_fdt.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/sort.h>
+#include <linux/stat.h>
 
+#include <asm/kvm_host.h>
 #include <asm/kvm_hyp.h>
 #include <asm/kvm_mmu.h>
 #include <asm/kvm_pkvm.h>
 #include <asm/kvm_pkvm_module.h>
 #include <asm/setup.h>
 
+#include <uapi/linux/mount.h>
+#include <linux/init_syscalls.h>
+
 #include "hyp_constants.h"
+#include "kvm_ptdump.h"
 
 DEFINE_STATIC_KEY_FALSE(kvm_protected_mode_initialized);
 
@@ -198,24 +204,34 @@ void __init kvm_hyp_reserve(void)
 
 static int __pkvm_create_hyp_vcpu(struct kvm *host_kvm, struct kvm_vcpu *host_vcpu, unsigned long idx)
 {
-	size_t hyp_vcpu_sz = PAGE_ALIGN(PKVM_HYP_VCPU_SIZE);
 	pkvm_handle_t handle = host_kvm->arch.pkvm.handle;
-	void *hyp_vcpu;
-	int ret = 0;
+	struct kvm_hyp_req *hyp_reqs;
+	int ret;
+
+	init_hyp_stage2_memcache(&host_vcpu->arch.stage2_mc);
 
 	/* Indexing of the vcpus to be sequential starting at 0. */
 	if (WARN_ON(host_vcpu->vcpu_idx != idx))
 		return -EINVAL;
 
-	hyp_vcpu = alloc_pages_exact(hyp_vcpu_sz, GFP_KERNEL_ACCOUNT);
-	if (!hyp_vcpu)
+	hyp_reqs = (struct kvm_hyp_req *)__get_free_page(GFP_KERNEL_ACCOUNT);
+	if (!hyp_reqs)
 		return -ENOMEM;
 
-	ret = kvm_call_hyp_nvhe(__pkvm_init_vcpu, handle, host_vcpu, hyp_vcpu);
-	if (ret) {
-		free_pages_exact(hyp_vcpu, hyp_vcpu_sz);
-		return ret;
-	}
+	ret = kvm_share_hyp(hyp_reqs, hyp_reqs + 1);
+	if (ret)
+		goto err_free_reqs;
+	host_vcpu->arch.hyp_reqs = hyp_reqs;
+
+	ret = kvm_call_refill_hyp_nvhe(__pkvm_init_vcpu,
+				       handle, host_vcpu);
+	if (!ret)
+		return 0;
+
+	kvm_unshare_hyp(hyp_reqs, hyp_reqs + 1);
+err_free_reqs:
+	free_page((unsigned long)hyp_reqs);
+	host_vcpu->arch.hyp_reqs = NULL;
 
 	return ret;
 }
@@ -228,9 +244,11 @@ static void __pkvm_vcpu_hyp_created(struct kvm_vcpu *vcpu)
 
 static void __pkvm_destroy_hyp_vm(struct kvm *host_kvm)
 {
-	struct kvm_pinned_page *ppage;
 	struct mm_struct *mm = current->mm;
+	struct kvm_pinned_page *ppage;
+	struct kvm_vcpu *host_vcpu;
 	struct rb_node *node;
+	unsigned long idx;
 
 	if (!host_kvm->arch.pkvm.handle)
 		goto out_free;
@@ -247,7 +265,7 @@ static void __pkvm_destroy_hyp_vm(struct kvm *host_kvm)
 		cond_resched();
 
 		account_locked_vm(mm, 1, false);
-		unpin_user_pages_dirty_lock(&ppage->page, 1, true);
+		unpin_user_pages_dirty_lock(&ppage->page, 1, host_kvm->arch.pkvm.enabled);
 		node = rb_next(node);
 		rb_erase(&ppage->node, &host_kvm->arch.pkvm.pinned_pages);
 		kfree(ppage);
@@ -257,7 +275,23 @@ static void __pkvm_destroy_hyp_vm(struct kvm *host_kvm)
 
 out_free:
 	host_kvm->arch.pkvm.handle = 0;
-	free_hyp_memcache(&host_kvm->arch.pkvm.teardown_mc);
+
+	atomic64_sub(host_kvm->arch.pkvm.stage2_teardown_mc.nr_pages << PAGE_SHIFT,
+		     &host_kvm->stat.protected_hyp_mem);
+	atomic64_sub(host_kvm->arch.pkvm.stage2_teardown_mc.nr_pages << PAGE_SHIFT,
+		     &host_kvm->stat.protected_pgtable_mem);
+	free_hyp_memcache(&host_kvm->arch.pkvm.stage2_teardown_mc);
+
+	kvm_for_each_vcpu(idx, host_vcpu, host_kvm) {
+		struct kvm_hyp_req *hyp_reqs = host_vcpu->arch.hyp_reqs;
+
+		if (!hyp_reqs)
+			continue;
+
+		kvm_unshare_hyp(hyp_reqs, hyp_reqs + 1);
+		host_vcpu->arch.hyp_reqs = NULL;
+		free_page((unsigned long)hyp_reqs);
+	}
 }
 
 /*
@@ -272,11 +306,11 @@ out_free:
  */
 static int __pkvm_create_hyp_vm(struct kvm *host_kvm)
 {
-	size_t pgd_sz, hyp_vm_sz, last_ran_sz;
 	struct kvm_vcpu *host_vcpu;
 	pkvm_handle_t handle;
-	void *pgd, *hyp_vm, *last_ran;
 	unsigned long idx;
+	size_t pgd_sz;
+	void *pgd;
 	int ret;
 
 	if (host_kvm->created_vcpus < 1)
@@ -292,29 +326,14 @@ static int __pkvm_create_hyp_vm(struct kvm *host_kvm)
 	pgd = alloc_pages_exact(pgd_sz, GFP_KERNEL_ACCOUNT);
 	if (!pgd)
 		return -ENOMEM;
+	atomic64_add(pgd_sz, &host_kvm->stat.protected_hyp_mem);
 
-	/* Allocate memory to donate to hyp for vm and vcpu pointers. */
-	hyp_vm_sz = PAGE_ALIGN(size_add(PKVM_HYP_VM_SIZE,
-					size_mul(sizeof(void *),
-						 host_kvm->created_vcpus)));
-	hyp_vm = alloc_pages_exact(hyp_vm_sz, GFP_KERNEL_ACCOUNT);
-	if (!hyp_vm) {
-		ret = -ENOMEM;
-		goto free_pgd;
-	}
-
-	/* Allocate memory to donate to hyp for tracking mmu->last_vcpu_ran. */
-	last_ran_sz = PAGE_ALIGN(array_size(num_possible_cpus(), sizeof(int)));
-	last_ran = alloc_pages_exact(last_ran_sz, GFP_KERNEL_ACCOUNT);
-	if (!last_ran) {
-		ret = -ENOMEM;
-		goto free_vm;
-	}
+	init_hyp_stage2_memcache(&host_kvm->arch.pkvm.stage2_teardown_mc);
 
 	/* Donate the VM memory to hyp and let hyp initialize it. */
-	ret = kvm_call_hyp_nvhe(__pkvm_init_vm, host_kvm, hyp_vm, pgd, last_ran);
+	ret = kvm_call_refill_hyp_nvhe(__pkvm_init_vm, host_kvm, pgd);
 	if (ret < 0)
-		goto free_last_ran;
+		goto free_pgd;
 
 	handle = ret;
 
@@ -328,17 +347,18 @@ static int __pkvm_create_hyp_vm(struct kvm *host_kvm)
 		__pkvm_vcpu_hyp_created(host_vcpu);
 	}
 
+	atomic64_set(&host_kvm->stat.protected_pgtable_mem, pgd_sz);
+	kvm_account_pgtable_pages(pgd, pgd_sz >> PAGE_SHIFT);
+
 	return 0;
 
 destroy_vm:
 	__pkvm_destroy_hyp_vm(host_kvm);
 	return ret;
-free_last_ran:
-	free_pages_exact(last_ran, last_ran_sz);
-free_vm:
-	free_pages_exact(hyp_vm, hyp_vm_sz);
 free_pgd:
 	free_pages_exact(pgd, pgd_sz);
+	atomic64_sub(pgd_sz, &host_kvm->stat.protected_hyp_mem);
+
 	return ret;
 }
 
@@ -363,8 +383,6 @@ void pkvm_destroy_hyp_vm(struct kvm *host_kvm)
 
 int pkvm_init_host_vm(struct kvm *host_kvm, unsigned long type)
 {
-	mutex_init(&host_kvm->lock);
-
 	if (!(type & KVM_VM_TYPE_ARM_PROTECTED))
 		return 0;
 
@@ -413,6 +431,12 @@ static int __init finalize_pkvm(void)
 	if (pkvm_load_early_modules())
 		pkvm_firmware_rmem_clear();
 
+	ret = kvm_iommu_init_driver();
+	if (ret) {
+		pr_err("Failed to init KVM IOMMU driver: %d\n", ret);
+		pkvm_firmware_rmem_clear();
+	}
+
 	/*
 	 * Exclude HYP sections from kmemleak so that they don't get peeked
 	 * at, which would end badly once inaccessible.
@@ -421,9 +445,13 @@ static int __init finalize_pkvm(void)
 	kmemleak_free_part(__hyp_rodata_start, __hyp_rodata_end - __hyp_rodata_start);
 	kmemleak_free_part_phys(hyp_mem_base, hyp_mem_size);
 
+	kvm_ptdump_host_register();
+
 	ret = pkvm_drop_host_privileges();
-	if (ret)
+	if (ret) {
 		pr_err("Failed to finalize Hyp protection: %d\n", ret);
+		kvm_iommu_remove_driver();
+	}
 
 	return ret;
 }
@@ -456,7 +484,7 @@ void pkvm_host_reclaim_page(struct kvm *host_kvm, phys_addr_t ipa)
 
 	ppage = container_of(node, struct kvm_pinned_page, node);
 	account_locked_vm(mm, 1, false);
-	unpin_user_pages_dirty_lock(&ppage->page, 1, true);
+	unpin_user_pages_dirty_lock(&ppage->page, 1, host_kvm->arch.pkvm.enabled);
 	kfree(ppage);
 }
 
@@ -668,7 +696,11 @@ int __init pkvm_load_early_modules(void)
 {
 	char *token, *buf = early_pkvm_modules;
 	char *module_path = CONFIG_PKVM_MODULE_PATH;
-	int err;
+	int err = init_mount("proc", "/proc", "proc",
+			     MS_SILENT | MS_NOEXEC | MS_NOSUID, NULL);
+
+	if (err)
+		return err;
 
 	while (true) {
 		token = strsep(&buf, ",");
@@ -691,6 +723,36 @@ int __init pkvm_load_early_modules(void)
 
 	return 0;
 }
+
+#ifdef CONFIG_PROTECTED_NVHE_STACKTRACE
+static LIST_HEAD(pkvm_modules);
+
+static void pkvm_el2_mod_add(struct pkvm_el2_module *mod)
+{
+	INIT_LIST_HEAD(&mod->node);
+	list_add(&mod->node, &pkvm_modules);
+}
+
+unsigned long pkvm_el2_mod_kern_va(unsigned long addr)
+{
+	struct pkvm_el2_module *mod;
+
+	list_for_each_entry(mod, &pkvm_modules, node) {
+		size_t len = (unsigned long)mod->sections.end -
+			     (unsigned long)mod->sections.start;
+
+		if (addr >= (unsigned long)mod->token &&
+		    addr < (unsigned long)mod->token + len)
+			return (unsigned long)mod->sections.start +
+				(addr - mod->token);
+	}
+
+	return 0;
+}
+#else
+static void pkvm_el2_mod_add(struct pkvm_el2_module *mod) { }
+unsigned long pkvm_el2_mod_kern_va(unsigned long addr) { return 0; }
+#endif
 
 struct pkvm_mod_sec_mapping {
 	struct pkvm_module_section *sec;
@@ -824,6 +886,10 @@ int __pkvm_load_el2_module(struct module *this, unsigned long *token)
 	if (token)
 		*token = (unsigned long)hyp_va;
 
+	mod->token = (unsigned long)hyp_va;
+	mod->sections.start = start;
+	mod->sections.end = end;
+
 	endrel = (void *)mod->relocs + mod->nr_relocs * sizeof(*endrel);
 	kvm_apply_hyp_module_relocations(start, hyp_va, mod->relocs, endrel);
 
@@ -850,6 +916,8 @@ int __pkvm_load_el2_module(struct module *this, unsigned long *token)
 		return ret;
 	}
 
+	pkvm_el2_mod_add(mod);
+
 	return 0;
 }
 EXPORT_SYMBOL(__pkvm_load_el2_module);
@@ -860,3 +928,57 @@ int __pkvm_register_el2_call(unsigned long hfn_hyp_va)
 }
 EXPORT_SYMBOL(__pkvm_register_el2_call);
 #endif /* CONFIG_MODULES */
+
+int __pkvm_topup_hyp_alloc_mgt(unsigned long id, unsigned long nr_pages, unsigned long sz_alloc)
+{
+	struct kvm_hyp_memcache mc;
+	int ret;
+
+	init_hyp_memcache(&mc);
+
+	ret = topup_hyp_memcache(&mc, nr_pages, get_order(sz_alloc));
+	if (ret)
+		return ret;
+
+	ret = kvm_call_hyp_nvhe(__pkvm_hyp_alloc_mgt_refill, id,
+				mc.head, mc.nr_pages);
+	if (ret)
+		free_hyp_memcache(&mc);
+
+	return ret;
+}
+EXPORT_SYMBOL(__pkvm_topup_hyp_alloc_mgt);
+
+int __pkvm_topup_hyp_alloc(unsigned long nr_pages)
+{
+	return __pkvm_topup_hyp_alloc_mgt(HYP_ALLOC_MGT_HEAP_ID, nr_pages, PAGE_SIZE);
+}
+EXPORT_SYMBOL(__pkvm_topup_hyp_alloc);
+
+unsigned long __pkvm_reclaim_hyp_alloc_mgt(unsigned long nr_pages)
+{
+	unsigned long ratelimit, last_reclaim, reclaimed = 0;
+	struct kvm_hyp_memcache mc;
+	struct arm_smccc_res res;
+
+	init_hyp_memcache(&mc);
+
+	do {
+		/* Arbitrary upper bound to limit the time spent at EL2 */
+		ratelimit = min(nr_pages, 16UL);
+
+		arm_smccc_1_1_hvc(KVM_HOST_SMCCC_FUNC(__pkvm_hyp_alloc_mgt_reclaim),
+				  ratelimit, &res);
+		if (WARN_ON(res.a0 != SMCCC_RET_SUCCESS))
+			break;
+
+		mc.head = res.a1;
+		last_reclaim = mc.nr_pages = res.a2;
+
+		free_hyp_memcache(&mc);
+		reclaimed += last_reclaim;
+
+	} while (last_reclaim && (reclaimed < nr_pages));
+
+	return reclaimed;
+}

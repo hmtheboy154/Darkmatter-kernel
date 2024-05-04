@@ -87,6 +87,12 @@ void rust_helper_spin_unlock(spinlock_t *lock)
 }
 EXPORT_SYMBOL_GPL(rust_helper_spin_unlock);
 
+int rust_helper_spin_trylock(spinlock_t *lock)
+{
+	return spin_trylock(lock);
+}
+EXPORT_SYMBOL_GPL(rust_helper_spin_trylock);
+
 void rust_helper_init_wait(struct wait_queue_entry *wq_entry)
 {
 	init_wait(wq_entry);
@@ -116,24 +122,6 @@ void rust_helper_kunmap_local(const void *addr)
        kunmap_local(addr);
 }
 EXPORT_SYMBOL_GPL(rust_helper_kunmap_local);
-
-refcount_t rust_helper_REFCOUNT_INIT(int n)
-{
-	return (refcount_t)REFCOUNT_INIT(n);
-}
-EXPORT_SYMBOL_GPL(rust_helper_REFCOUNT_INIT);
-
-void rust_helper_refcount_inc(refcount_t *r)
-{
-	refcount_inc(r);
-}
-EXPORT_SYMBOL_GPL(rust_helper_refcount_inc);
-
-bool rust_helper_refcount_dec_and_test(refcount_t *r)
-{
-	return refcount_dec_and_test(r);
-}
-EXPORT_SYMBOL_GPL(rust_helper_refcount_dec_and_test);
 
 __force void *rust_helper_ERR_PTR(long err)
 {
@@ -276,6 +264,34 @@ void rust_helper_security_release_secctx(char *secdata, u32 seclen)
 	security_release_secctx(secdata, seclen);
 }
 EXPORT_SYMBOL_GPL(rust_helper_security_release_secctx);
+
+int rust_helper_security_binder_set_context_mgr(const struct cred *mgr)
+{
+	return security_binder_set_context_mgr(mgr);
+}
+EXPORT_SYMBOL_GPL(rust_helper_security_binder_set_context_mgr);
+
+int rust_helper_security_binder_transaction(const struct cred *from,
+					    const struct cred *to)
+{
+	return security_binder_transaction(from, to);
+}
+EXPORT_SYMBOL_GPL(rust_helper_security_binder_transaction);
+
+int rust_helper_security_binder_transfer_binder(const struct cred *from,
+						const struct cred *to)
+{
+	return security_binder_transfer_binder(from, to);
+}
+EXPORT_SYMBOL_GPL(rust_helper_security_binder_transfer_binder);
+
+int rust_helper_security_binder_transfer_file(const struct cred *from,
+					      const struct cred *to,
+					      struct file *file)
+{
+	return security_binder_transfer_file(from, to, file);
+}
+EXPORT_SYMBOL_GPL(rust_helper_security_binder_transfer_file);
 #endif
 
 void rust_helper_init_task_work(struct callback_head *twork,
@@ -284,6 +300,13 @@ void rust_helper_init_task_work(struct callback_head *twork,
 	init_task_work(twork, func);
 }
 EXPORT_SYMBOL_GPL(rust_helper_init_task_work);
+
+unsigned long rust_helper_task_rlimit(const struct task_struct *task,
+				      unsigned int limit)
+{
+	return task_rlimit(task, limit);
+}
+EXPORT_SYMBOL_GPL(rust_helper_task_rlimit);
 
 void rust_helper_rb_link_node(struct rb_node *node, struct rb_node *parent,
 			      struct rb_node **rb_link)
@@ -340,6 +363,20 @@ struct vm_area_struct *rust_helper_vma_lookup(struct mm_struct *mm,
 	return vma_lookup(mm, addr);
 }
 EXPORT_SYMBOL_GPL(rust_helper_vma_lookup);
+
+unsigned long rust_helper_list_lru_count(struct list_lru *lru)
+{
+	return list_lru_count(lru);
+}
+EXPORT_SYMBOL_GPL(rust_helper_list_lru_count);
+
+unsigned long rust_helper_list_lru_walk(struct list_lru *lru,
+					list_lru_walk_cb isolate, void *cb_arg,
+					unsigned long nr_to_walk)
+{
+	return list_lru_walk(lru, isolate, cb_arg, nr_to_walk);
+}
+EXPORT_SYMBOL_GPL(rust_helper_list_lru_walk);
 
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
