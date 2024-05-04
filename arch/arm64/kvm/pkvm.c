@@ -5,6 +5,7 @@
  */
 
 #include <linux/init.h>
+#include <linux/initrd.h>
 #include <linux/io.h>
 #include <linux/kmemleak.h>
 #include <linux/kvm_host.h>
@@ -29,6 +30,7 @@
 
 #include "hyp_constants.h"
 #include "kvm_ptdump.h"
+#include "hyp_trace.h"
 
 DEFINE_STATIC_KEY_FALSE(kvm_protected_mode_initialized);
 
@@ -637,6 +639,7 @@ static int __init __pkvm_request_early_module(char *module_name,
 		"PATH=/sbin:/usr/sbin:/bin:/usr/bin",
 		NULL
 	};
+	static bool proc;
 	char **argv;
 	int idx = 0;
 
@@ -668,6 +671,15 @@ static int __init __pkvm_request_early_module(char *module_name,
 	/* Even with CONFIG_STATIC_USERMODEHELPER we really want this path */
 	info->path = modprobe_path;
 
+	if (!proc) {
+		wait_for_initramfs();
+		if (init_mount("proc", "/proc", "proc",
+			       MS_SILENT | MS_NOEXEC | MS_NOSUID, NULL))
+			pr_warn("Couldn't mount /proc, pKVM module parameters will be ignored\n");
+
+		proc = true;
+	}
+
 	return call_usermodehelper_exec(info, UMH_WAIT_PROC | UMH_KILLABLE);
 err:
 	kfree(argv);
@@ -696,11 +708,7 @@ int __init pkvm_load_early_modules(void)
 {
 	char *token, *buf = early_pkvm_modules;
 	char *module_path = CONFIG_PKVM_MODULE_PATH;
-	int err = init_mount("proc", "/proc", "proc",
-			     MS_SILENT | MS_NOEXEC | MS_NOSUID, NULL);
-
-	if (err)
-		return err;
+	int err;
 
 	while (true) {
 		token = strsep(&buf, ",");
@@ -715,6 +723,8 @@ int __init pkvm_load_early_modules(void)
 				       token, err);
 				return err;
 			}
+			/* Do it every iteration to iron out the dependencies. */
+			flush_deferred_probe_now();
 		}
 
 		if (buf)
@@ -835,6 +845,7 @@ int __pkvm_load_el2_module(struct module *this, unsigned long *token)
 		{ &mod->text, KVM_PGTABLE_PROT_R | KVM_PGTABLE_PROT_X },
 		{ &mod->bss, KVM_PGTABLE_PROT_R | KVM_PGTABLE_PROT_W },
 		{ &mod->rodata, KVM_PGTABLE_PROT_R },
+		{ &mod->event_ids, KVM_PGTABLE_PROT_R },
 		{ &mod->data, KVM_PGTABLE_PROT_R | KVM_PGTABLE_PROT_W },
 	};
 	void *start, *end, *hyp_va;
@@ -898,6 +909,12 @@ int __pkvm_load_el2_module(struct module *this, unsigned long *token)
 	 * inaccessible.
 	 */
 	kmemleak_free_part(start, size);
+
+	ret = hyp_trace_init_mod_events(mod->hyp_events,
+					mod->event_ids.start,
+					mod->nr_hyp_events);
+	if (ret)
+		kvm_err("Failed to init module events: %d\n", ret);
 
 	ret = pkvm_map_module_sections(secs_map + secs_first, hyp_va,
 				       ARRAY_SIZE(secs_map) - secs_first);
