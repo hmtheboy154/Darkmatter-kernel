@@ -5494,6 +5494,7 @@ context_switch(struct rq *rq, struct task_struct *prev,
 
 	prepare_lock_switch(rq, next, rf);
 
+	trace_android_rvh_context_switch(prev, next);
 	/* Here we just switch the register state and the stack. */
 	switch_to(prev, next, prev);
 	barrier();
@@ -7287,8 +7288,10 @@ void rt_mutex_setprio(struct task_struct *p, struct task_struct *pi_task)
 	} else {
 		if (dl_prio(oldprio))
 			p->dl.pi_se = &p->dl;
-		if (rt_prio(oldprio))
+		else if (rt_prio(oldprio))
 			p->rt.timeout = 0;
+		else if (!task_has_idle_policy(p))
+			reweight_task(p, prio - MAX_RT_PRIO);
 	}
 
 	__setscheduler_prio(p, prio);
@@ -8628,7 +8631,6 @@ long sched_getaffinity(pid_t pid, struct cpumask *mask)
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
 	cpumask_and(mask, &p->cpus_mask, cpu_active_mask);
-	trace_android_rvh_sched_getaffinity(p, mask);
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
 out_unlock:
@@ -8678,6 +8680,11 @@ static void do_sched_yield(void)
 {
 	struct rq_flags rf;
 	struct rq *rq;
+	long skip = 0;
+
+	trace_android_rvh_before_do_sched_yield(&skip);
+	if (skip)
+		return;
 
 	if (!sysctl_sched_yield_type)
 		return;
