@@ -1009,12 +1009,13 @@ void psi_task_switch(struct task_struct *prev, struct task_struct *next,
 }
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
+static DEFINE_PER_CPU(u64, psi_irq_time);
 void psi_account_irqtime(struct rq *rq, struct task_struct *curr, struct task_struct *prev)
 {
 	int cpu = task_cpu(curr);
 	struct psi_group *group;
 	struct psi_group_cpu *groupc;
-	u64 now, irq;
+	u64 now, irq, *psi_time;
 	s64 delta;
 
 	if (!curr->pid)
@@ -1027,10 +1028,11 @@ void psi_account_irqtime(struct rq *rq, struct task_struct *curr, struct task_st
 
 	now = cpu_clock(cpu);
 	irq = irq_time_read(cpu);
-	delta = (s64)(irq - rq->psi_irq_time);
+	psi_time =  &per_cpu(psi_irq_time, cpu);
+	delta = (s64)(irq - *psi_time);
 	if (delta < 0)
 		return;
-	rq->psi_irq_time = irq;
+	*psi_time = irq;
 
 	do {
 		if (!group->enabled)

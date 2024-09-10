@@ -4648,8 +4648,9 @@ vm_fault_t do_set_pmd(struct vm_fault *vmf, struct page *page)
 	if (!thp_vma_suitable_order(vma, haddr, PMD_ORDER))
 		return ret;
 
-	if (page != &folio->page || folio_order(folio) != HPAGE_PMD_ORDER)
+	if (folio_order(folio) != HPAGE_PMD_ORDER)
 		return ret;
+	page = &folio->page;
 
 	/*
 	 * Just backoff if any subpage of a THP is corrupted otherwise
@@ -4721,7 +4722,7 @@ void set_pte_range(struct vm_fault *vmf, struct folio *folio,
 	struct vm_area_struct *vma = vmf->vma;
 	bool uffd_wp = vmf_orig_pte_uffd_wp(vmf);
 	bool write = vmf->flags & FAULT_FLAG_WRITE;
-	bool prefault = in_range(vmf->address, addr, nr * PAGE_SIZE);
+	bool prefault = !in_range(vmf->address, addr, nr * PAGE_SIZE);
 	pte_t entry;
 
 	flush_icache_pages(vma, page, nr);
@@ -4949,6 +4950,8 @@ static vm_fault_t do_read_fault(struct vm_fault *vmf)
 		ret = do_fault_around(vmf);
 		if (ret)
 			return ret;
+	} else {
+		trace_android_vh_do_read_fault(vmf, fault_around_pages);
 	}
 
 	ret = vmf_can_call_fault(vmf);
