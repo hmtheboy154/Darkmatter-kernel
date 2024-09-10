@@ -4036,13 +4036,14 @@ static bool ieee80211_assoc_config_link(struct ieee80211_link_data *link,
 		 */
 		assoc_data->link[link_id].status = WLAN_STATUS_SUCCESS;
 		if (elems->ml_basic) {
-			if (!(elems->ml_basic->control &
-					cpu_to_le16(IEEE80211_MLC_BASIC_PRES_BSS_PARAM_CH_CNT))) {
+			int bss_param_ch_cnt =
+				ieee80211_mle_get_bss_param_ch_cnt((const void *)elems->ml_basic);
+
+			if (bss_param_ch_cnt < 0) {
 				ret = false;
 				goto out;
 			}
-			link->u.mgd.bss_param_ch_cnt =
-				ieee80211_mle_get_bss_param_ch_cnt(elems->ml_basic);
+			link->u.mgd.bss_param_ch_cnt = bss_param_ch_cnt;
 		}
 	} else if (!elems->prof ||
 		   !(elems->prof->control & prof_bss_param_ch_present)) {
@@ -7080,7 +7081,7 @@ static int ieee80211_prep_connection(struct ieee80211_sub_if_data *sdata,
 			sdata_info(sdata,
 				   "failed to insert STA entry for the AP (error %d)\n",
 				   err);
-			goto out_err;
+			goto out_release_chan;
 		}
 	} else
 		WARN_ON_ONCE(!ether_addr_equal(link->u.mgd.bssid, cbss->bssid));
@@ -7091,8 +7092,9 @@ static int ieee80211_prep_connection(struct ieee80211_sub_if_data *sdata,
 
 	return 0;
 
+out_release_chan:
+	ieee80211_link_release_channel(link);
 out_err:
-	ieee80211_link_release_channel(&sdata->deflink);
 	ieee80211_vif_set_links(sdata, 0, 0);
 	return err;
 }
