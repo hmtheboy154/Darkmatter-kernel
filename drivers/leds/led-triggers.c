@@ -194,24 +194,11 @@ int led_trigger_set(struct led_classdev *led_cdev, struct led_trigger *trig)
 		spin_unlock(&trig->leddev_list_lock);
 		led_cdev->trigger = trig;
 
-		/*
-		 * Some activate() calls use led_trigger_event() to initialize
-		 * the brightness of the LED for which the trigger is being set.
-		 * Ensure the led_cdev is visible on trig->led_cdevs for this.
-		 */
-		synchronize_rcu();
-
-		/*
-		 * If "set brightness to 0" is pending in workqueue,
-		 * we don't want that to be reordered after ->activate()
-		 */
-		flush_work(&led_cdev->set_brightness_work);
-
-		ret = 0;
 		if (trig->activate)
 			ret = trig->activate(led_cdev);
 		else
-			led_set_brightness(led_cdev, trig->brightness);
+			ret = 0;
+
 		if (ret)
 			goto err_activate;
 
@@ -385,8 +372,6 @@ void led_trigger_event(struct led_trigger *trig,
 
 	if (!trig)
 		return;
-
-	trig->brightness = brightness;
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(led_cdev, &trig->led_cdevs, trig_list)
