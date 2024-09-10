@@ -740,6 +740,7 @@ static int system_1p_ev_to_ump_midi1(const struct snd_seq_event *event,
 				     union snd_ump_midi1_msg *data,
 				     unsigned char status)
 {
+	data->system.type = UMP_MSG_TYPE_SYSTEM; // override
 	data->system.status = status;
 	data->system.parm1 = event->data.control.value & 0x7f;
 	return 1;
@@ -751,6 +752,7 @@ static int system_2p_ev_to_ump_midi1(const struct snd_seq_event *event,
 				     union snd_ump_midi1_msg *data,
 				     unsigned char status)
 {
+	data->system.type = UMP_MSG_TYPE_SYSTEM; // override
 	data->system.status = status;
 	data->system.parm1 = event->data.control.value & 0x7f;
 	data->system.parm2 = (event->data.control.value >> 7) & 0x7f;
@@ -789,7 +791,8 @@ static int paf_ev_to_ump_midi2(const struct snd_seq_event *event,
 
 /* set up the MIDI2 RPN/NRPN packet data from the parsed info */
 static void fill_rpn(struct snd_seq_ump_midi2_bank *cc,
-		     union snd_ump_midi2_msg *data)
+		     union snd_ump_midi2_msg *data,
+		     unsigned char channel)
 {
 	if (cc->rpn_set) {
 		data->rpn.status = UMP_MSG_STATUS_RPN;
@@ -806,6 +809,7 @@ static void fill_rpn(struct snd_seq_ump_midi2_bank *cc,
 	}
 	data->rpn.data = upscale_14_to_32bit((cc->cc_data_msb << 7) |
 					     cc->cc_data_lsb);
+	data->rpn.channel = channel;
 	cc->cc_data_msb = cc->cc_data_lsb = 0;
 }
 
@@ -853,7 +857,7 @@ static int cc_ev_to_ump_midi2(const struct snd_seq_event *event,
 		cc->cc_data_lsb = val;
 		if (!(cc->rpn_set || cc->nrpn_set))
 			return 0; // skip
-		fill_rpn(cc, data);
+		fill_rpn(cc, data, channel);
 		return 1;
 	}
 
@@ -955,7 +959,7 @@ static int ctrl14_ev_to_ump_midi2(const struct snd_seq_event *event,
 		cc->cc_data_lsb = lsb;
 		if (!(cc->rpn_set || cc->nrpn_set))
 			return 0; // skip
-		fill_rpn(cc, data);
+		fill_rpn(cc, data, channel);
 		return 1;
 	}
 
@@ -1016,7 +1020,7 @@ static int system_2p_ev_to_ump_midi2(const struct snd_seq_event *event,
 				     union snd_ump_midi2_msg *data,
 				     unsigned char status)
 {
-	return system_1p_ev_to_ump_midi1(event, dest_port,
+	return system_2p_ev_to_ump_midi1(event, dest_port,
 					 (union snd_ump_midi1_msg *)data,
 					 status);
 }
@@ -1072,6 +1076,8 @@ static const struct seq_ev_to_ump seq_ev_ump_encoders[] = {
 	{ SNDRV_SEQ_EVENT_STOP, UMP_SYSTEM_STATUS_STOP,
 	  system_ev_to_ump_midi1, system_ev_to_ump_midi2 },
 	{ SNDRV_SEQ_EVENT_SENSING, UMP_SYSTEM_STATUS_ACTIVE_SENSING,
+	  system_ev_to_ump_midi1, system_ev_to_ump_midi2 },
+	{ SNDRV_SEQ_EVENT_RESET, UMP_SYSTEM_STATUS_RESET,
 	  system_ev_to_ump_midi1, system_ev_to_ump_midi2 },
 };
 

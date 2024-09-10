@@ -750,7 +750,6 @@ static void update_rq_clock_task(struct rq *rq, s64 delta)
 
 	rq->prev_irq_time += irq_delta;
 	delta -= irq_delta;
-	psi_account_irqtime(rq->curr, irq_delta);
 	delayacct_irq(rq->curr, irq_delta);
 #endif
 #ifdef CONFIG_PARAVIRT_TIME_ACCOUNTING
@@ -1939,6 +1938,12 @@ static int uclamp_validate(struct task_struct *p,
 {
 	int util_min = p->uclamp_req[UCLAMP_MIN].value;
 	int util_max = p->uclamp_req[UCLAMP_MAX].value;
+	bool done = false;
+	int ret = 0;
+
+	trace_android_vh_uclamp_validate(p, attr, &ret, &done);
+	if (done)
+		return ret;
 
 	if (attr->sched_flags & SCHED_FLAG_UTIL_CLAMP_MIN) {
 		util_min = attr->sched_util_min;
@@ -2800,6 +2805,7 @@ out_unlock:
 	put_task_struct(p);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(push_cpu_stop);
 
 /*
  * sched_class::set_cpus_allowed must do the below, but is not required to
@@ -5780,7 +5786,7 @@ void scheduler_tick(void)
 {
 	int cpu = smp_processor_id();
 	struct rq *rq = cpu_rq(cpu);
-	struct task_struct *curr = rq->curr;
+	struct task_struct *curr;
 	struct rq_flags rf;
 	unsigned long thermal_pressure;
 	u64 resched_latency;
@@ -5791,6 +5797,9 @@ void scheduler_tick(void)
 	sched_clock_tick();
 
 	rq_lock(rq, &rf);
+
+	curr = rq->curr;
+	psi_account_irqtime(rq, curr, NULL);
 
 	update_rq_clock(rq);
 	trace_android_rvh_tick_entry(rq);
@@ -6836,6 +6845,7 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 		++*switch_count;
 
 		migrate_disable_switch(rq, prev);
+		psi_account_irqtime(rq, prev, next);
 		psi_sched_switch(prev, next, !task_on_rq_queued(prev));
 
 		trace_sched_switch(sched_mode & SM_MASK_PREEMPT, prev, next, prev_state);
@@ -7162,7 +7172,7 @@ asmlinkage __visible void __sched preempt_schedule_irq(void)
 int default_wake_function(wait_queue_entry_t *curr, unsigned mode, int wake_flags,
 			  void *key)
 {
-	WARN_ON_ONCE(IS_ENABLED(CONFIG_SCHED_DEBUG) && wake_flags & ~(WF_SYNC|WF_CURRENT_CPU));
+	WARN_ON_ONCE(IS_ENABLED(CONFIG_SCHED_DEBUG) && wake_flags & ~(WF_SYNC|WF_CURRENT_CPU|WF_ANDROID_VENDOR));
 	return try_to_wake_up(curr->private, mode, wake_flags);
 }
 EXPORT_SYMBOL(default_wake_function);
@@ -7352,6 +7362,10 @@ void set_user_nice(struct task_struct *p, long nice)
 	 */
 	rq = task_rq_lock(p, &rf);
 	update_rq_clock(rq);
+
+	trace_android_rvh_set_user_nice_locked(p, &nice);
+	if (task_nice(p) == nice)
+		goto out_unlock;
 
 	/*
 	 * The RT priorities are set via sched_setscheduler(), but we still

@@ -1435,7 +1435,8 @@ static int cpufreq_online(unsigned int cpu)
 		}
 
 		/* Let the per-policy boost flag mirror the cpufreq_driver boost during init */
-		policy->boost_enabled = cpufreq_boost_enabled() && policy_has_boost_freq(policy);
+		if (cpufreq_boost_enabled() && policy_has_boost_freq(policy))
+			policy->boost_enabled = true;
 
 		/*
 		 * The initialization has succeeded and the policy is online.
@@ -1496,6 +1497,8 @@ static int cpufreq_online(unsigned int cpu)
 			policy->max_freq_req = NULL;
 			goto out_destroy_policy;
 		}
+
+		trace_android_vh_cpufreq_online(policy);
 
 		blocking_notifier_call_chain(&cpufreq_policy_notifier_list,
 				CPUFREQ_CREATE_POLICY, policy);

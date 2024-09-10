@@ -373,6 +373,7 @@ static int madvise_cold_or_pageout_pte_range(pmd_t *pmd,
 	LIST_HEAD(folio_list);
 	bool pageout_anon_only_filter;
 	int nr;
+	swp_entry_t entry;
 
 	if (fatal_signal_pending(current))
 		return -EINTR;
@@ -418,7 +419,7 @@ static int madvise_cold_or_pageout_pte_range(pmd_t *pmd,
 			err = split_folio(folio);
 			folio_unlock(folio);
 			folio_put(folio);
-			if (!err)
+			if (err >= 0)
 				goto regular_folio;
 			return 0;
 		}
@@ -467,8 +468,12 @@ regular_folio:
 		if (pte_none(ptent))
 			continue;
 
-		if (!pte_present(ptent))
+		if (!pte_present(ptent)) {
+			entry = pte_to_swp_entry(ptent);
+			trace_android_vh_madvise_pageout_swap_entry(entry,
+					swp_swapcount(entry), NULL);
 			continue;
+		}
 
 		folio = vm_normal_folio(vma, addr, ptent);
 		if (!folio || folio_is_zone_device(folio))
@@ -516,7 +521,7 @@ regular_folio:
 				if (!start_pte)
 					break;
 				arch_enter_lazy_mmu_mode();
-				if (!err)
+				if (err >= 0)
 					nr = 0;
 				continue;
 			}
@@ -749,7 +754,7 @@ static int madvise_free_pte_range(pmd_t *pmd, unsigned long addr,
 				if (!start_pte)
 					break;
 				arch_enter_lazy_mmu_mode();
-				if (!err)
+				if (err >= 0)
 					nr = 0;
 				continue;
 			}

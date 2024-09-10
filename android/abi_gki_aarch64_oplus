@@ -8,6 +8,7 @@
   blk_rq_map_user
   blk_rq_map_user_iov
   blk_start_plug
+  blk_fill_rwbs
   __break_lease
   cgroup_add_legacy_cftypes
   config_item_init_type_name
@@ -17,6 +18,7 @@
   cpufreq_frequency_table_get_index
   cpufreq_policy_transition_delay_us
   cpufreq_update_util_data
+  contpte_ptep_test_and_clear_young
   d_drop
   dentry_open
   dev_get_by_index_rcu
@@ -248,6 +250,7 @@
   __traceiter_android_vh_futex_wake_this
   __traceiter_android_vh_futex_wake_traverse_plist
   __traceiter_android_vh_futex_wake_up_q_finish
+  __traceiter_android_vh_fsnotify_open
   __traceiter_android_vh_get_page_wmark
   __traceiter_android_vh_irqtime_account_process_tick
   __traceiter_android_vh_kmalloc_slab
@@ -280,6 +283,7 @@
   __traceiter_android_vh_rmqueue_bulk_bypass
   __traceiter_android_vh_rt_mutex_steal
   __traceiter_android_vh_rtmutex_waiter_prio
+  __traceiter_android_vh_rtmutex_wait_start
   __traceiter_android_vh_rwsem_can_spin_on_owner
   __traceiter_android_vh_rwsem_direct_rsteal
   __traceiter_android_vh_rwsem_downgrade_wake_finish
@@ -392,6 +396,7 @@
   __tracepoint_android_vh_futex_wake_this
   __tracepoint_android_vh_futex_wake_traverse_plist
   __tracepoint_android_vh_futex_wake_up_q_finish
+  __tracepoint_android_vh_fsnotify_open
   __tracepoint_android_vh_get_page_wmark
   __tracepoint_android_vh_irqtime_account_process_tick
   __tracepoint_android_vh_kmalloc_slab
@@ -423,6 +428,7 @@
   __tracepoint_android_vh_rmqueue_bulk_bypass
   __tracepoint_android_vh_rt_mutex_steal
   __tracepoint_android_vh_rtmutex_waiter_prio
+  __tracepoint_android_vh_rtmutex_wait_start
   __tracepoint_android_vh_rwsem_can_spin_on_owner
   __tracepoint_android_vh_rwsem_direct_rsteal
   __tracepoint_android_vh_rwsem_downgrade_wake_finish
@@ -487,6 +493,7 @@
   v4l2_i2c_subdev_init
   vfs_create
   vfs_getattr
+  vfs_getattr_nosec
   vfs_iter_read
   vfs_iter_write
   vfs_llseek
