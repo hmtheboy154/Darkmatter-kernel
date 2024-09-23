@@ -35,6 +35,12 @@
 
 #include "virtgpu_drv.h"
 
+static char *force_resolution = NULL;
+static int force_resolution_width = 0;
+static int force_resolution_height = 0;
+module_param(force_resolution, charp, 0600);
+MODULE_PARM_DESC(force_resolution, "Force resolution");
+
 #define XRES_MIN    32
 #define YRES_MIN    32
 
@@ -164,7 +170,7 @@ static int virtio_gpu_conn_get_modes(struct drm_connector *connector)
 	struct drm_display_mode *mode = NULL;
 	int count, width, height;
 
-	if (output->edid) {
+	if (output->edid && force_resolution == NULL) {
 		count = drm_add_edid_modes(connector, output->edid);
 		if (count)
 			return count;
@@ -174,10 +180,15 @@ static int virtio_gpu_conn_get_modes(struct drm_connector *connector)
 	height = le32_to_cpu(output->info.r.height);
 	count = drm_add_modes_noedid(connector, XRES_MAX, YRES_MAX);
 
+	if (force_resolution_width && force_resolution_height) {
+		width = force_resolution_width;
+		height = force_resolution_height;
+	}
+
 	if (width == 0 || height == 0) {
 		drm_set_preferred_mode(connector, XRES_DEF, YRES_DEF);
 	} else {
-		DRM_DEBUG("add mode: %dx%d\n", width, height);
+		DRM_INFO("add mode: %dx%d\n", width, height);
 		mode = drm_cvt_mode(connector->dev, width, height, 60,
 				    false, false, false);
 		if (!mode)
@@ -203,6 +214,10 @@ static enum drm_mode_status virtio_gpu_conn_mode_valid(struct drm_connector *con
 	if (!(mode->type & DRM_MODE_TYPE_PREFERRED))
 		return MODE_OK;
 	if (mode->hdisplay == XRES_DEF && mode->vdisplay == YRES_DEF)
+		return MODE_OK;
+	if (force_resolution_width && force_resolution_height &&
+		mode->hdisplay == force_resolution_width &&
+		mode->vdisplay == force_resolution_height)
 		return MODE_OK;
 	if (mode->hdisplay <= width  && mode->hdisplay >= width - 16 &&
 	    mode->vdisplay <= height && mode->vdisplay >= height - 16)
@@ -263,8 +278,13 @@ static int vgdev_output_init(struct virtio_gpu_device *vgdev, int index)
 	output->index = index;
 	if (index == 0) {
 		output->info.enabled = cpu_to_le32(true);
-		output->info.r.width = cpu_to_le32(XRES_DEF);
-		output->info.r.height = cpu_to_le32(YRES_DEF);
+		if (force_resolution_width && force_resolution_height) {
+			output->info.r.width = cpu_to_le32(force_resolution_width);
+			output->info.r.height = cpu_to_le32(force_resolution_height);
+		} else {
+			output->info.r.width = cpu_to_le32(XRES_DEF);
+			output->info.r.height = cpu_to_le32(YRES_DEF);
+		}
 	}
 
 	primary = virtio_gpu_plane_init(vgdev, DRM_PLANE_TYPE_PRIMARY, index);
@@ -334,6 +354,18 @@ int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev)
 
 	if (!vgdev->num_scanouts)
 		return 0;
+
+	if (force_resolution != NULL) {
+		sscanf(force_resolution, "%dx%d", &force_resolution_width,
+				&force_resolution_height);
+		if (force_resolution_width > 0 && force_resolution_height > 0) {
+			DRM_INFO("Force resolution to %dx%d\n",
+				force_resolution_width, force_resolution_height);
+		} else {
+			force_resolution_width = 0;
+			force_resolution_height = 0;
+		}
+	}
 
 	ret = drmm_mode_config_init(vgdev->ddev);
 	if (ret)
