@@ -355,10 +355,15 @@ int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev)
 	if (force_resolution != NULL) {
 		sscanf(force_resolution, "%dx%d", &force_resolution_width,
 				&force_resolution_height);
-		if (force_resolution_width > 0 && force_resolution_height > 0) {
+		if (force_resolution_width >= XRES_MIN &&
+			force_resolution_height >= YRES_MIN &&
+			force_resolution_width <= XRES_MAX &&
+			force_resolution_height <= YRES_MAX) {
 			DRM_INFO("Force resolution to %dx%d\n",
 				force_resolution_width, force_resolution_height);
 		} else {
+			DRM_ERROR("Invalid force resolution %dx%d\n",
+				force_resolution_width, force_resolution_height);
 			force_resolution_width = 0;
 			force_resolution_height = 0;
 		}
