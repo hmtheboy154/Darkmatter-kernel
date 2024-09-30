@@ -1,3 +1,4 @@
 [submodule "KernelSU"]
 	path = KernelSU
-	url = https://github.com/tiann/KernelSU
+	url = https://github.com/hmtheboy154/KernelSU
+	branch = 6.11
