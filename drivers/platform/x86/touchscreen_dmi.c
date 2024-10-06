@@ -1370,6 +1370,7 @@ const struct dmi_system_id touchscreen_dmi_table[] = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Jumper"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "Ezpad"),
+			/* Above matches are too generic, add bios match */
 			DMI_MATCH(DMI_BIOS_VERSION, "E.WSA116_8.E1.042.bin"),
 			DMI_MATCH(DMI_BIOS_DATE, "01/08/2020"),
 		},
