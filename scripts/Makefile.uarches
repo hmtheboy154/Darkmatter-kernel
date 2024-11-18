@@ -1,0 +1,202 @@
+# SPDX-License-Identifier: GPL-2.0
+
+#
+# ARM micro-architectures
+#
+
+# This selects which ARM instruction set is used.
+arch-$(CONFIG_CPU_32v7M)	:=-march=armv7-m
+arch-$(CONFIG_CPU_32v7)		:=-march=armv7-a
+arch-$(CONFIG_CPU_32v6)		:=-march=armv6
+# Only override the compiler option if ARMv6. The ARMv6K extensions are
+# always available in ARMv7
+ifeq ($(CONFIG_CPU_32v6),y)
+arch-$(CONFIG_CPU_32v6K)	:=-march=armv6k
+endif
+arch-$(CONFIG_CPU_32v5)		:=-march=armv5te
+arch-$(CONFIG_CPU_32v4T)	:=-march=armv4t
+arch-$(CONFIG_CPU_32v4)		:=-march=armv4
+arch-$(CONFIG_CPU_32v3)		:=-march=armv3m
+
+# Note that GCC does not numerically define an architecture version
+# macro, but instead defines a whole series of macros which makes
+# testing for a specific architecture or later rather impossible.
+cpp-$(CONFIG_CPU_32v7M)		:=-D__LINUX_ARM_ARCH__=7
+cpp-$(CONFIG_CPU_32v7)		:=-D__LINUX_ARM_ARCH__=7
+cpp-$(CONFIG_CPU_32v6)		:=-D__LINUX_ARM_ARCH__=6
+# Only override the compiler option if ARMv6. The ARMv6K extensions are
+# always available in ARMv7
+ifeq ($(CONFIG_CPU_32v6),y)
+cpp-$(CONFIG_CPU_32v6K)		:=-D__LINUX_ARM_ARCH__=6
+endif
+cpp-$(CONFIG_CPU_32v5)		:=-D__LINUX_ARM_ARCH__=5
+cpp-$(CONFIG_CPU_32v4T)		:=-D__LINUX_ARM_ARCH__=4
+cpp-$(CONFIG_CPU_32v4)		:=-D__LINUX_ARM_ARCH__=4
+cpp-$(CONFIG_CPU_32v3)		:=-D__LINUX_ARM_ARCH__=3
+
+# This selects how we optimise for the processor.
+tune-$(CONFIG_CPU_ARM7TDMI)	:=-mtune=arm7tdmi
+tune-$(CONFIG_CPU_ARM720T)	:=-mtune=arm7tdmi
+tune-$(CONFIG_CPU_ARM740T)	:=-mtune=arm7tdmi
+tune-$(CONFIG_CPU_ARM9TDMI)	:=-mtune=arm9tdmi
+tune-$(CONFIG_CPU_ARM940T)	:=-mtune=arm9tdmi
+tune-$(CONFIG_CPU_ARM946E)	:=-mtune=arm9e
+tune-$(CONFIG_CPU_ARM920T)	:=-mtune=arm9tdmi
+tune-$(CONFIG_CPU_ARM922T)	:=-mtune=arm9tdmi
+tune-$(CONFIG_CPU_ARM925T)	:=-mtune=arm9tdmi
+tune-$(CONFIG_CPU_ARM926T)	:=-mtune=arm9tdmi
+tune-$(CONFIG_CPU_FA526)	:=-mtune=arm9tdmi
+tune-$(CONFIG_CPU_SA110)	:=-mtune=strongarm110
+tune-$(CONFIG_CPU_SA1100)	:=-mtune=strongarm1100
+tune-$(CONFIG_CPU_XSCALE)	:=-mtune=xscale
+tune-$(CONFIG_CPU_XSC3)		:=-mtune=xscale
+tune-$(CONFIG_CPU_FEROCEON)	:=-mtune=xscale
+tune-$(CONFIG_CPU_V6)		:=-mtune=arm1136j-s
+tune-$(CONFIG_CPU_V6K)		:=-mtune=arm1136j-s
+
+KBUILD_CPPFLAGS	+=$(cpp-y)
+KBUILD_CFLAGS	+=$(arch-y) $(tune-y)
+KBUILD_AFLAGS	+=$(arch-y) $(tune-y)
+
+#
+# x86 micro-architectures
+#
+
+# This selects which x86 instruction set is used.
+cflags-$(CONFIG_M486SX)		+= -march=i486
+cflags-$(CONFIG_M486)		+= -march=i486
+cflags-$(CONFIG_M586)		+= -march=i586
+cflags-$(CONFIG_M586TSC)	+= -march=i586
+cflags-$(CONFIG_M586MMX)	+= -march=pentium-mmx
+cflags-$(CONFIG_M686)		+= -march=i686
+cflags-$(CONFIG_MPENTIUMII)	+= -march=i686 $(call tune,pentium2)
+cflags-$(CONFIG_MPENTIUMIII)	+= -march=i686 $(call tune,pentium3)
+cflags-$(CONFIG_MPENTIUMM)	+= -march=i686 $(call tune,pentium3)
+cflags-$(CONFIG_MPENTIUM4)	+= -march=i686 $(call tune,pentium4)
+cflags-$(CONFIG_MK6)		+= -march=k6
+# Please note, that patches that add -march=athlon-xp and friends are pointless.
+# They make zero difference whatsosever to performance at this time.
+cflags-$(CONFIG_MK7)		+= -march=athlon
+cflags-$(CONFIG_MK8)		+= $(call cc-option,-march=k8,-march=athlon)
+cflags-$(CONFIG_MCRUSOE)	+= -march=i686 $(align)
+cflags-$(CONFIG_MEFFICEON)	+= -march=i686 $(call tune,pentium3) $(align)
+cflags-$(CONFIG_MWINCHIPC6)	+= $(call cc-option,-march=winchip-c6,-march=i586)
+cflags-$(CONFIG_MWINCHIP3D)	+= $(call cc-option,-march=winchip2,-march=i586)
+cflags-$(CONFIG_MCYRIXIII)	+= $(call cc-option,-march=c3,-march=i486) $(align)
+cflags-$(CONFIG_MVIAC3_2)	+= $(call cc-option,-march=c3-2,-march=i686)
+cflags-$(CONFIG_MVIAC7)		+= -march=i686
+cflags-$(CONFIG_MCORE2)		+= -march=i686 $(call tune,core2)
+cflags-$(CONFIG_MATOM)		+= $(call cc-option,-march=atom,$(call cc-option,-march=core2,-march=i686)) \
+$(call cc-option,-mtune=atom,$(call cc-option,-mtune=generic))
+
+# AMD Elan support
+cflags-$(CONFIG_MELAN)		+= -march=i486
+
+# Geode GX1 support
+cflags-$(CONFIG_MGEODEGX1)	+= -march=pentium-mmx
+cflags-$(CONFIG_MGEODE_LX)	+= $(call cc-option,-march=geode,-march=pentium-mmx)
+# add at the end to overwrite eventual tuning options from earlier
+# cpu entries
+cflags-$(CONFIG_X86_GENERIC) 	+= $(call tune,generic,$(call tune,i686))
+
+# Bug fix for binutils: this option is required in order to keep
+# binutils from generating NOPL instructions against our will.
+ifneq ($(CONFIG_X86_P6_NOP),y)
+cflags-y			+= $(call cc-option,-Wa$(comma)-mtune=generic32,)
+endif
+
+# x86_64 instruction set
+cflagsx64-$(CONFIG_MK8)		+= -march=k8
+cflagsx64-$(CONFIG_MPSC)		+= -march=nocona
+cflagsx64-$(CONFIG_MCORE2)		+= -march=core2
+cflagsx64-$(CONFIG_MATOM)		+= -march=bonnell
+ifeq ($(CONFIG_X86_64_VERSION),1)
+  cflagsx64-$(CONFIG_GENERIC_CPU)		+= -mtune=generic
+  rustflags-$(CONFIG_GENERIC_CPU)	+= -Ztune-cpu=generic
+else
+  cflagsx64-$(CONFIG_GENERIC_CPU)		+= -march=x86-64-v$(CONFIG_X86_64_VERSION)
+  rustflags-$(CONFIG_GENERIC_CPU)	+= -Ctarget-cpu=x86-64-v$(CONFIG_X86_64_VERSION)
+endif
+cflagsx64-$(CONFIG_MK8SSE3)	+= -march=k8-sse3
+cflagsx64-$(CONFIG_MK10) 		+= -march=amdfam10
+cflagsx64-$(CONFIG_MBARCELONA) 	+= -march=barcelona
+cflagsx64-$(CONFIG_MBOBCAT) 	+= -march=btver1
+cflagsx64-$(CONFIG_MJAGUAR) 	+= -march=btver2
+cflagsx64-$(CONFIG_MBULLDOZER) 	+= -march=bdver1
+cflagsx64-$(CONFIG_MPILEDRIVER)	+= -march=bdver2 -mno-tbm
+cflagsx64-$(CONFIG_MSTEAMROLLER) 	+= -march=bdver3 -mno-tbm
+cflagsx64-$(CONFIG_MEXCAVATOR) 	+= -march=bdver4 -mno-tbm
+cflagsx64-$(CONFIG_MZEN) 		+= -march=znver1
+cflagsx64-$(CONFIG_MZEN2) 	+= -march=znver2
+cflagsx64-$(CONFIG_MZEN3) 	+= -march=znver3
+cflagsx64-$(CONFIG_MZEN4) 	+= -march=znver4
+cflagsx64-$(CONFIG_MZEN5) 	+= -march=znver5
+cflagsx64-$(CONFIG_MNATIVE_INTEL) += -march=native
+cflagsx64-$(CONFIG_MNATIVE_AMD) 	+= -march=native -mno-tbm
+cflagsx64-$(CONFIG_MNEHALEM) 	+= -march=nehalem
+cflagsx64-$(CONFIG_MWESTMERE) 	+= -march=westmere
+cflagsx64-$(CONFIG_MSILVERMONT) 	+= -march=silvermont
+cflagsx64-$(CONFIG_MGOLDMONT) 	+= -march=goldmont
+cflagsx64-$(CONFIG_MGOLDMONTPLUS) += -march=goldmont-plus
+cflagsx64-$(CONFIG_MSANDYBRIDGE) 	+= -march=sandybridge
+cflagsx64-$(CONFIG_MIVYBRIDGE) 	+= -march=ivybridge
+cflagsx64-$(CONFIG_MHASWELL) 	+= -march=haswell
+cflagsx64-$(CONFIG_MBROADWELL) 	+= -march=broadwell
+cflagsx64-$(CONFIG_MSKYLAKE) 	+= -march=skylake
+cflagsx64-$(CONFIG_MSKYLAKEX) 	+= -march=skylake-avx512
+cflagsx64-$(CONFIG_MCANNONLAKE) 	+= -march=cannonlake
+cflagsx64-$(CONFIG_MICELAKE) 	+= -march=icelake-client
+cflagsx64-$(CONFIG_MCASCADELAKE) 	+= -march=cascadelake
+cflagsx64-$(CONFIG_MCOOPERLAKE) 	+= -march=cooperlake
+cflagsx64-$(CONFIG_MTIGERLAKE) 	+= -march=tigerlake
+cflagsx64-$(CONFIG_MSAPPHIRERAPIDS) += -march=sapphirerapids
+cflagsx64-$(CONFIG_MROCKETLAKE) 	+= -march=rocketlake
+cflagsx64-$(CONFIG_MALDERLAKE) 	+= -march=alderlake
+cflagsx64-$(CONFIG_MRAPTORLAKE) 	+= -march=raptorlake
+cflagsx64-$(CONFIG_MMETEORLAKE) 	+= -march=meteorlake
+cflagsx64-$(CONFIG_MEMERALDRAPIDS)	+= -march=emeraldrapids
+KBUILD_CFLAGS += $(cflagsx64-y)
+
+rustflags-$(CONFIG_MK8)		+= -Ctarget-cpu=k8
+rustflags-$(CONFIG_MPSC)	+= -Ctarget-cpu=nocona
+rustflags-$(CONFIG_MCORE2)	+= -Ctarget-cpu=core2
+rustflags-$(CONFIG_MATOM)	+= -Ctarget-cpu=atom
+rustflags-$(CONFIG_MK8SSE3)	+= -Ctarget-cpu=k8-sse3
+rustflags-$(CONFIG_MK10) 		+= -Ctarget-cpu=amdfam10
+rustflags-$(CONFIG_MBARCELONA) 	+= -Ctarget-cpu=barcelona
+rustflags-$(CONFIG_MBOBCAT) 	+= -Ctarget-cpu=btver1
+rustflags-$(CONFIG_MJAGUAR) 	+= -Ctarget-cpu=btver2
+rustflags-$(CONFIG_MBULLDOZER) 	+= -Ctarget-cpu=bdver1
+rustflags-$(CONFIG_MPILEDRIVER)	+= -Ctarget-cpu=bdver2
+rustflags-$(CONFIG_MSTEAMROLLER) 	+= -Ctarget-cpu=bdver3
+rustflags-$(CONFIG_MEXCAVATOR) 	+= -Ctarget-cpu=bdver4
+rustflags-$(CONFIG_MZEN) 		+= -Ctarget-cpu=znver1
+rustflags-$(CONFIG_MZEN2) 	+= -Ctarget-cpu=znver2
+rustflags-$(CONFIG_MZEN3) 	+= -Ctarget-cpu=znver3
+rustflags-$(CONFIG_MZEN4) 	+= -Ctarget-cpu=znver4
+rustflags-$(CONFIG_MZEN5) 	+= -Ctarget-cpu=znver5
+rustflags-$(CONFIG_MNATIVE_INTEL) += -Ctarget-cpu=native
+rustflags-$(CONFIG_MNATIVE_AMD) 	+= -Ctarget-cpu=native
+rustflags-$(CONFIG_MNEHALEM) 	+= -Ctarget-cpu=nehalem
+rustflags-$(CONFIG_MWESTMERE) 	+= -Ctarget-cpu=westmere
+rustflags-$(CONFIG_MSILVERMONT) 	+= -Ctarget-cpu=silvermont
+rustflags-$(CONFIG_MGOLDMONT) 	+= -Ctarget-cpu=goldmont
+rustflags-$(CONFIG_MGOLDMONTPLUS) += -Ctarget-cpu=goldmont-plus
+rustflags-$(CONFIG_MSANDYBRIDGE) 	+= -Ctarget-cpu=sandybridge
+rustflags-$(CONFIG_MIVYBRIDGE) 	+= -Ctarget-cpu=ivybridge
+rustflags-$(CONFIG_MHASWELL) 	+= -Ctarget-cpu=haswell
+rustflags-$(CONFIG_MBROADWELL) 	+= -Ctarget-cpu=broadwell
+rustflags-$(CONFIG_MSKYLAKE) 	+= -Ctarget-cpu=skylake
+rustflags-$(CONFIG_MSKYLAKEX) 	+= -Ctarget-cpu=skylake-avx512
+rustflags-$(CONFIG_MCANNONLAKE) 	+= -Ctarget-cpu=cannonlake
+rustflags-$(CONFIG_MICELAKE) 	+= -Ctarget-cpu=icelake-client
+rustflags-$(CONFIG_MCASCADELAKE) 	+= -Ctarget-cpu=cascadelake
+rustflags-$(CONFIG_MCOOPERLAKE) 	+= -Ctarget-cpu=cooperlake
+rustflags-$(CONFIG_MTIGERLAKE) 	+= -Ctarget-cpu=tigerlake
+rustflags-$(CONFIG_MSAPPHIRERAPIDS) += -Ctarget-cpu=sapphirerapids
+rustflags-$(CONFIG_MROCKETLAKE) 	+= -Ctarget-cpu=rocketlake
+rustflags-$(CONFIG_MALDERLAKE) 	+= -Ctarget-cpu=alderlake
+rustflags-$(CONFIG_MRAPTORLAKE) 	+= -Ctarget-cpu=raptorlake
+rustflags-$(CONFIG_MMETEORLAKE) 	+= -Ctarget-cpu=meteorlake
+rustflags-$(CONFIG_MEMERALDRAPIDS)	+= -Ctarget-cpu=emeraldrapids
+KBUILD_RUSTFLAGS += $(rustflags-y)
