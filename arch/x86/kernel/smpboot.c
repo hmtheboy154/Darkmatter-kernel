@@ -62,6 +62,8 @@
 #include <linux/mc146818rtc.h>
 #include <linux/acpi.h>
 
+#include <acpi/cppc_acpi.h>
+
 #include <asm/acpi.h>
 #include <asm/cacheinfo.h>
 #include <asm/desc.h>
@@ -498,7 +500,17 @@ static int x86_cluster_flags(void)
 static int x86_die_flags(void)
 {
 	if (cpu_feature_enabled(X86_FEATURE_HYBRID_CPU))
-	       return x86_sched_itmt_flags();
+		return x86_sched_itmt_flags();
+
+	switch (boot_cpu_data.x86_vendor) {
+	case X86_VENDOR_AMD:
+	case X86_VENDOR_HYGON:
+		bool prefcore = false;
+
+		amd_detect_prefcore(&prefcore);
+		if (prefcore || cpu_feature_enabled(X86_FEATURE_AMD_HETEROGENEOUS_CORES))
+			return x86_sched_itmt_flags();
+	};
 
 	return 0;
 }
