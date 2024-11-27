@@ -1326,10 +1326,13 @@ static int vmw_kms_new_framebuffer_surface(struct vmw_private *dev_priv,
 
 	switch (mode_cmd->pixel_format) {
 	case DRM_FORMAT_ARGB8888:
-		format = SVGA3D_A8R8G8B8;
+		format = SVGA3D_B8G8R8A8_UNORM;
 		break;
 	case DRM_FORMAT_XRGB8888:
-		format = SVGA3D_X8R8G8B8;
+		format = SVGA3D_B8G8R8X8_UNORM;
+		break;
+	case DRM_FORMAT_ABGR8888:
+		format = SVGA3D_R8G8B8A8_UNORM;
 		break;
 	case DRM_FORMAT_RGB565:
 		format = SVGA3D_R5G6B5;
@@ -1438,11 +1441,17 @@ static int vmw_create_bo_proxy(struct drm_device *dev,
 
 	switch (mode_cmd->pixel_format) {
 	case DRM_FORMAT_ARGB8888:
-	case DRM_FORMAT_XRGB8888:
-		format = SVGA3D_X8R8G8B8;
+	        format = SVGA3D_B8G8R8A8_UNORM;
 		bytes_pp = 4;
 		break;
-
+	case DRM_FORMAT_XRGB8888:
+		format = SVGA3D_B8G8R8X8_UNORM;
+		bytes_pp = 4;
+		break;
+	case DRM_FORMAT_ABGR8888:
+		format = SVGA3D_R8G8B8A8_UNORM;
+		bytes_pp = 4;
+		break;
 	case DRM_FORMAT_RGB565:
 	case DRM_FORMAT_XRGB1555:
 		format = SVGA3D_R5G6B5;
