@@ -44,6 +44,9 @@ mkdir -p "${destdir}"
 	fi
 } | tar -c -f - -T - | tar -xf - -C "${destdir}"
 
+# copy .config manually to be where it's expected to be
+cp "${KCONFIG_CONFIG}" "${destdir}/.config"
+
 # When ${CC} and ${HOSTCC} differ, rebuild host programs using ${CC}.
 #
 # This caters to host programs that participate in Kbuild. objtool and
