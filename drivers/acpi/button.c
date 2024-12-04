@@ -38,6 +38,10 @@
 #define ACPI_BUTTON_DEVICE_NAME_LID	"Lid Switch"
 #define ACPI_BUTTON_TYPE_LID		0x05
 
+/* does userspace want to see KEY_POWER at resume? */
+static bool __read_mostly key_power_at_resume = true;
+module_param(key_power_at_resume, bool, 0644);
+
 enum {
 	ACPI_BUTTON_LID_INIT_IGNORE,
 	ACPI_BUTTON_LID_INIT_OPEN,
@@ -452,7 +456,7 @@ static void acpi_button_notify(acpi_handle handle, u32 event, void *data)
 	acpi_pm_wakeup_event(&device->dev);
 
 	button = acpi_driver_data(device);
-	if (button->suspended)
+	if (button->suspended && !key_power_at_resume)
 		return;
 
 	input = button->input;

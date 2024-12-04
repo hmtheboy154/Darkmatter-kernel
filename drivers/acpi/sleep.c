@@ -454,6 +454,12 @@ static int acpi_pm_prepare(void)
 	return error;
 }
 
+static void pwr_btn_notify(struct acpi_device *device)
+{
+	struct acpi_driver *acpi_drv = to_acpi_driver(device->dev.driver);
+	acpi_drv->ops.notify(device, ACPI_FIXED_HARDWARE_EVENT);
+}
+
 /**
  *	acpi_pm_finish - Instruct the platform to leave a sleep state.
  *
@@ -496,6 +502,7 @@ static void acpi_pm_finish(void)
 						    NULL, -1);
 	if (pwr_btn_adev) {
 		pm_wakeup_event(&pwr_btn_adev->dev, 0);
+		pwr_btn_notify(pwr_btn_adev);
 		acpi_dev_put(pwr_btn_adev);
 	}
 }
