@@ -77,6 +77,10 @@ extern ssize_t cpu_show_gds(struct device *dev,
 			    struct device_attribute *attr, char *buf);
 extern ssize_t cpu_show_reg_file_data_sampling(struct device *dev,
 					       struct device_attribute *attr, char *buf);
+#if defined(CONFIG_X86) || defined(CONFIG_X86_64)						   
+extern ssize_t cpu_show_syscall_hardening(struct device *dev,
+					       struct device_attribute *attr, char *buf);
+#endif
 
 extern __printf(4, 5)
 struct device *cpu_device_create(struct device *parent, void *drvdata,

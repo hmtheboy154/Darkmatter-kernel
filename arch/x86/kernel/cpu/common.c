@@ -276,6 +276,39 @@ static int __init x86_noinvpcid_setup(char *s)
 }
 early_param("noinvpcid", x86_noinvpcid_setup);
 
+enum syscall_hardening_switch {
+	SYSCALL_HARDENING_ON,
+	SYSCALL_HARDENING_OFF,
+};
+
+static enum syscall_hardening_switch syscall_hardening __ro_after_init = SYSCALL_HARDENING_ON;
+
+static int __init syscall_hardening_parse_cmdline(char *str)
+{
+	if (!str)
+		return -EINVAL;
+
+	if (!strcmp(str, "off"))
+		syscall_hardening = SYSCALL_HARDENING_OFF;
+	else if (!strcmp(str, "on"))
+		syscall_hardening = SYSCALL_HARDENING_ON;
+	else
+		pr_err("Ignoring unknown syscall_hardening option (%s)", str);
+
+	return 0;
+}
+early_param("syscall_hardening", syscall_hardening_parse_cmdline);
+
+static void __init syscall_hardening_disable(void)
+{
+	pr_info("syscall hardening function called \n");
+	if (syscall_hardening == SYSCALL_HARDENING_ON)
+		return;
+
+	setup_force_cpu_cap(X86_FEATURE_INDIRECT_SAFE);
+	pr_info("Syscall hardening is disabled to allow indirect calls !\n");
+}
+
 #ifdef CONFIG_X86_32
 static int cachesize_override = -1;
 static int disable_x86_serial_nr = 1;
@@ -2346,6 +2379,12 @@ void __init arch_cpu_finalize_init(void)
 
 	identify_boot_cpu();
 
+	/* Projects like KernelSU is relying on hooking indirect syscall which 
+	 * is being hardened by default on recent kernel. Allow disabling it 
+	 * if user specified in cmdline.
+	 */
+	syscall_hardening_disable();
+
 	select_idle_routine();
 
 	/*
@@ -2425,3 +2464,17 @@ void __init arch_cpu_finalize_init(void)
 	 */
 	mem_encrypt_init();
 }
+
+#ifdef CONFIG_SYSFS
+static ssize_t syscall_hardening_show_state(char *buf)
+{
+	if (boot_cpu_has(X86_FEATURE_INDIRECT_SAFE))
+		return sysfs_emit(buf, "Syscall hardening: Disabled\n");
+	return sysfs_emit(buf, "Syscall hardening: Enabled\n");
+}
+
+ssize_t cpu_show_syscall_hardening(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return syscall_hardening_show_state(buf);
+}
+#endif

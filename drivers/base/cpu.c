@@ -300,6 +300,15 @@ static ssize_t print_cpus_isolated(struct device *dev,
 }
 static DEVICE_ATTR(isolated, 0444, print_cpus_isolated, NULL);
 
+#if defined(CONFIG_X86) || defined(CONFIG_X86_64)
+ssize_t __weak cpu_show_syscall_hardening(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "Not available\n");
+}
+static DEVICE_ATTR(syscall_hardening, 0444, cpu_show_syscall_hardening, NULL);
+#endif
+
 #ifdef CONFIG_NO_HZ_FULL
 static ssize_t print_cpus_nohz_full(struct device *dev,
 				    struct device_attribute *attr, char *buf)
@@ -505,6 +514,9 @@ static struct attribute *cpu_root_attrs[] = {
 	&dev_attr_offline.attr,
 	&dev_attr_enabled.attr,
 	&dev_attr_isolated.attr,
+#if defined(CONFIG_X86) || defined(CONFIG_X86_64)
+	&dev_attr_syscall_hardening.attr,
+#endif
 #ifdef CONFIG_NO_HZ_FULL
 	&dev_attr_nohz_full.attr,
 #endif
