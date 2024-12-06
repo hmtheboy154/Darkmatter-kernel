@@ -571,6 +571,21 @@ config NFT_NAT
 	  This option adds the "nat" expression that you can use to perform
 	  typical Network Address Translation (NAT) packet transformations.
 
+config NFT_FULLCONE
+	depends on NF_CONNTRACK
+	depends on NF_NAT
+	tristate "Netfilter nf_tables fullcone support"
+	help
+	  This options adds the "fullcone" expression that you can use
+	  to perform NAT in the RFC3489-compatible full cone SNAT flavour.
+	  Currently only UDP traffic is supported for full-cone NAT.
+	  For other protos FULLCONENAT is equivalent to MASQUERADE.
+
+	  To compile this code as a module, choose M here: the module will be
+	  called nft_fullcone.
+
+	  If unsure, say N.
+
 config NFT_TUNNEL
 	tristate "Netfilter nf_tables tunnel module"
 	help
@@ -1025,6 +1040,15 @@ config NETFILTER_XT_TARGET_NOTRACK
 	depends on IP_NF_RAW || IP6_NF_RAW
 	depends on NETFILTER_ADVANCED
 	select NETFILTER_XT_TARGET_CT
+
+config NETFILTER_XT_TARGET_FLOWOFFLOAD
+	tristate '"FLOWOFFLOAD" target support'
+	depends on NF_FLOW_TABLE
+	depends on NETFILTER_INGRESS
+	help
+	  This option adds a `FLOWOFFLOAD' target, which uses the nf_flow_offload
+	  module to speed up processing of packets by bypassing the usual
+	  netfilter chains
 
 config NETFILTER_XT_TARGET_RATEEST
 	tristate '"RATEEST" target support'
