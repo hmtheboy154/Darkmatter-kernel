@@ -237,6 +237,7 @@ int available_idle_cpu(int cpu)
 
 	return 1;
 }
+EXPORT_SYMBOL_GPL(available_idle_cpu);
 
 /**
  * idle_task - return the idle task for a given CPU.
@@ -823,6 +824,7 @@ int sched_setattr(struct task_struct *p, const struct sched_attr *attr)
 {
 	return __sched_setscheduler(p, attr, true, true);
 }
+EXPORT_SYMBOL_GPL(sched_setattr);
 
 int sched_setattr_nocheck(struct task_struct *p, const struct sched_attr *attr)
 {
@@ -1418,6 +1420,11 @@ static void do_sched_yield(void)
 {
 	struct rq_flags rf;
 	struct rq *rq;
+	long skip = 0;
+
+	trace_android_rvh_before_do_sched_yield(&skip);
+	if (skip)
+		return;
 
 	if (!sysctl_sched_yield_type)
 		return;

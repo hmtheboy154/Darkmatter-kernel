@@ -968,7 +968,6 @@ _ROCKPI4_MODULE_OUTS = [
     "drivers/thermal/rockchip_thermal.ko",
     "drivers/usb/host/ohci-hcd.ko",
     "drivers/usb/host/ohci-platform.ko",
-    "drivers/virtio/virtio_pci_legacy_dev.ko",
     "net/core/failover.ko",
 ]
 
@@ -1295,6 +1294,31 @@ pkg_install(
     srcs = [":yukawa_dist_files"],
     visibility = ["//visibility:private"],
     destdir = "out/yukawa/dist",
+)
+
+kernel_build(
+    name = "fips140",
+    outs = [],
+    base_kernel = ":kernel_aarch64",
+    build_config = "build.config.common",
+    defconfig = "arch/arm64/configs/gki_defconfig",
+    make_goals = ["modules"],
+    makefile = ":Makefile",
+    module_outs = ["crypto/fips140.ko"],
+    post_defconfig_fragments = ["arch/arm64/configs/fips140_gki.fragment"],
+)
+
+pkg_files(
+    name = "fips140_dist_files",
+    srcs = [":fips140"],
+    strip_prefix = strip_prefix.files_only(),
+    visibility = ["//visibility:private"],
+)
+
+pkg_install(
+    name = "fips140_dist",
+    srcs = ["fips140_dist_files"],
+    destdir = "out/fips140/dist",
 )
 
 # allmodconfig build tests.
@@ -1963,6 +1987,28 @@ cc_binary_with_abi(
         ":kselftest_futex_headers_lib",
         ":kselftest_headers_lib",
     ],
+)
+
+cc_library(
+    name = "kselftest_memfd",
+    srcs = ["tools/testing/selftests/memfd/common.c"],
+    hdrs = ["tools/testing/selftests/memfd/common.h"],
+    copts = _KSELFTEST_COPTS,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":kselftest_headers_lib",
+    ],
+)
+
+cc_binary_with_abi(
+    name = "kselftest_memfd_test",
+    srcs = ["tools/testing/selftests/memfd/memfd_test.c"],
+    copts = _KSELFTEST_COPTS,
+    includes = ["tools/testing/selftests"],
+    path_prefix = _KSELFTEST_DIR,
+    target_compatible_with = ["@platforms//os:android"],
+    visibility = ["//visibility:private"],
+    deps = [":kselftest_memfd"],
 )
 
 cc_binary_with_abi(
@@ -2675,6 +2721,7 @@ pkg_filegroup(
         ":kselftest_futex_futex_wait_wouldblock_x86_64",
         ":kselftest_futex_futex_wait_x86_64",
         ":kselftest_kcmp_kcmp_test_x86_64",
+        ":kselftest_memfd_test_x86_64",
         ":kselftest_mm_compaction_test_x86_64",
         ":kselftest_mm_hugepage_mmap_x86_64",
         ":kselftest_mm_hugepage_shm_x86_64",
@@ -2875,6 +2922,7 @@ pkg_filegroup(
         ":kselftest_futex_futex_wait_uninitialized_heap_arm64",
         ":kselftest_futex_futex_wait_wouldblock_arm64",
         ":kselftest_kcmp_kcmp_test_arm64",
+        ":kselftest_memfd_test_arm64",
         ":kselftest_mm_compaction_test_arm64",
         ":kselftest_mm_hugepage_mmap_arm64",
         ":kselftest_mm_hugepage_shm_arm64",
