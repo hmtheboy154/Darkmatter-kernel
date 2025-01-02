@@ -83,6 +83,7 @@ _COMMON_GKI_MODULES_LIST = [
     "net/rfkill/rfkill.ko",
     "net/tipc/tipc.ko",
     "net/tipc/tipc_diag.ko",
+    "net/tls/tls.ko",
     "net/vmw_vsock/vmw_vsock_virtio_transport.ko",
 ]
 
@@ -207,4 +208,4 @@ def get_gki_protected_modules_list(arch = None):
     all_gki_modules = get_gki_modules_list(arch) + get_kunit_modules_list(arch)
     unprotected_modules = _COMMON_UNPROTECTED_MODULES_LIST
     protected_modules = [mod for mod in all_gki_modules if mod not in unprotected_modules]
-    return protected_modules
+    return sorted(protected_modules)
