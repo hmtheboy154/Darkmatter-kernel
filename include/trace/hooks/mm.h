@@ -68,6 +68,16 @@ DECLARE_HOOK(android_vh_calc_alloc_flags,
 	TP_PROTO(gfp_t gfp_mask, unsigned int *alloc_flags,
 		bool *bypass),
 	TP_ARGS(gfp_mask, alloc_flags, bypass));
+
+DECLARE_HOOK(android_vh_slab_folio_alloced,
+	TP_PROTO(unsigned int order, gfp_t flags),
+	TP_ARGS(order, flags));
+DECLARE_HOOK(android_vh_kmalloc_large_alloced,
+	TP_PROTO(struct folio *folio, unsigned int order, gfp_t flags),
+	TP_ARGS(folio, order, flags));
+DECLARE_RESTRICTED_HOOK(android_rvh_ctl_dirty_rate,
+	TP_PROTO(struct inode *inode),
+	TP_ARGS(inode), 1);
 #endif /* _TRACE_HOOK_MM_H */
 
 /* This part must be outside protection */
