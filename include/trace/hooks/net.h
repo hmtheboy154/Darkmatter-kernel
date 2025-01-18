@@ -17,9 +17,23 @@ DECLARE_HOOK(android_vh_ptype_head,
 struct sock;
 DECLARE_HOOK(android_vh_tcp_write_timeout_estab_retrans,
 	TP_PROTO(struct sock *sk), TP_ARGS(sk));
+DECLARE_HOOK(android_vh_tcp_connect,
+	TP_PROTO(struct sk_buff *skb), TP_ARGS(skb));
 struct request_sock;
 DECLARE_HOOK(android_vh_inet_csk_clone_lock,
 	TP_PROTO(struct sock *newsk, const struct request_sock *req), TP_ARGS(newsk, req));
+DECLARE_HOOK(android_vh_tcp_clean_rtx_queue,
+	TP_PROTO(struct sock *sk, int flag, long seq_rtt_us),
+	TP_ARGS(sk, flag, seq_rtt_us));
+struct inet_connection_sock;
+DECLARE_HOOK(android_vh_tcp_rcv_synack,
+	TP_PROTO(struct inet_connection_sock *icsk), TP_ARGS(icsk));
+DECLARE_HOOK(android_vh_udp_unicast_rcv_skb,
+	TP_PROTO(struct sk_buff *skb, struct sock *sk),
+	TP_ARGS(skb, sk));
+DECLARE_HOOK(android_vh_udp6_unicast_rcv_skb,
+	TP_PROTO(struct sk_buff *skb, struct sock *sk),
+	TP_ARGS(skb, sk));
 /* macro versions of hooks are no longer required */
 
 #endif /* _TRACE_HOOK_NET_VH_H */
