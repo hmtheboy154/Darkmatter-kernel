@@ -11,6 +11,7 @@
 
 struct shmem_inode_info;
 struct folio;
+struct folio_batch;
 
 DECLARE_RESTRICTED_HOOK(android_rvh_shmem_get_folio,
 			TP_PROTO(struct shmem_inode_info *info, struct folio **folio),
@@ -57,6 +58,12 @@ DECLARE_HOOK(android_vh_oom_check_panic,
 	TP_ARGS(oc, ret));
 
 struct page_vma_mapped_walk;
+DECLARE_HOOK(android_vh_slab_alloc_node,
+	TP_PROTO(void *object, unsigned long addr, struct kmem_cache *s),
+	TP_ARGS(object, addr, s));
+DECLARE_HOOK(android_vh_slab_free,
+	TP_PROTO(unsigned long addr, struct kmem_cache *s),
+	TP_ARGS(addr, s));
 DECLARE_HOOK(android_vh_test_clear_look_around_ref,
 	TP_PROTO(struct page *page),
 	TP_ARGS(page));
@@ -87,6 +94,16 @@ DECLARE_HOOK(android_vh_alloc_pages_entry,
 	TP_PROTO(gfp_t *gfp, unsigned int order, int preferred_nid,
 		nodemask_t *nodemask),
 	TP_ARGS(gfp, order, preferred_nid, nodemask));
+
+DECLARE_HOOK(android_vh_free_unref_folios_to_pcp_bypass,
+	TP_PROTO(struct folio_batch *folios, bool *bypass),
+	TP_ARGS(folios, bypass));
+DECLARE_RESTRICTED_HOOK(android_rvh_vmalloc_node_bypass,
+	TP_PROTO(unsigned long size, gfp_t gfp_mask, void **addr),
+	TP_ARGS(size, gfp_mask, addr), 1);
+DECLARE_RESTRICTED_HOOK(android_rvh_vfree_bypass,
+	TP_PROTO(const void *addr, bool *bypass),
+	TP_ARGS(addr, bypass), 1);
 #endif /* _TRACE_HOOK_MM_H */
 
 /* This part must be outside protection */
