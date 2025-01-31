@@ -9,8 +9,8 @@
     {
       "path": "system/netd"
     }
- ],
- "presubmit": [
+  ],
+  "presubmit": [
     {
       "name": "CtsAppEnumerationTestCases",
       "options": [
@@ -283,6 +283,21 @@
           "include-filter": "android.util.cts.FloatMathTest"
         }
       ]
+    },
+    {
+      "name": "CtsRootBluetoothTestCases"
+    },
+    {
+      "name": "vts_kernel_net_tests"
+    },
+    {
+      "name": "binderLibTest"
+    },
+    {
+      "name": "CtsLibcoreTestCases"
+    },
+    {
+      "name": "CtsUsbTests"
     }
   ]
 }
