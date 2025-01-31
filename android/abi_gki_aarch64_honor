@@ -55,6 +55,18 @@
   tty_unlock
   tty_set_ldisc
   tty_kclose
+  percpu_ref_init
+  percpu_ref_exit
+  android_debug_per_cpu_symbol
+  android_debug_symbol
+  __traceiter_rpm_idle
+  __tracepoint_rpm_idle
+  __traceiter_rpm_suspend
+  __tracepoint_rpm_suspend
+  __traceiter_rpm_resume
+  __tracepoint_rpm_resume
+  __traceiter_rpm_return_int
+  __tracepoint_rpm_return_int
   __kfifo_len_r
   __traceiter_android_vh_killed_process
   __tracepoint_android_vh_killed_process
@@ -112,6 +124,10 @@
   __tracepoint_android_vh_udp_unicast_rcv_skb
   __traceiter_android_vh_udp6_unicast_rcv_skb
   __tracepoint_android_vh_udp6_unicast_rcv_skb
+  __traceiter_android_vh_tcp_rcv_established_fast_path
+  __tracepoint_android_vh_tcp_rcv_established_fast_path
+  __traceiter_android_vh_tcp_rcv_established_slow_path
+  __tracepoint_android_vh_tcp_rcv_established_slow_path
   __tracepoint_android_vh_si_mem_available_adjust
   __traceiter_android_vh_si_mem_available_adjust
   __tracepoint_android_vh_si_meminfo_adjust
@@ -126,6 +142,8 @@
   __tracepoint_android_vh_udp_v4_connect
   __traceiter_android_vh_udp_v6_connect
   __tracepoint_android_vh_udp_v6_connect
+  __traceiter_android_rvh_dma_buf_stats_teardown
+  __tracepoint_android_rvh_dma_buf_stats_teardown
   __traceiter_android_rvh_hw_protection_shutdown
   __tracepoint_android_rvh_hw_protection_shutdown
   __traceiter_android_rvh_bpf_int_jit_compile_ro
@@ -146,8 +164,16 @@
   __tracepoint_android_vh_sk_free
   __traceiter_android_vh_sk_clone_lock
   __tracepoint_android_vh_sk_clone_lock
+  __traceiter_android_rvh_f2fs_down_read
+  __tracepoint_android_rvh_f2fs_down_read
+  __traceiter_android_vh_f2fs_improve_priority
+  __tracepoint_android_vh_f2fs_improve_priority
+  __traceiter_android_vh_f2fs_restore_priority
+  __tracepoint_android_vh_f2fs_restore_priority
   __traceiter_android_vh_cma_alloc_retry
   __tracepoint_android_vh_cma_alloc_retry
+  __tracepoint_android_vh_should_memcg_bypass
+  __traceiter_android_vh_should_memcg_bypass
   __traceiter_android_rvh_ogki_vfree_bypass
   __traceiter_android_rvh_ogki_vmalloc_node_bypass
   __traceiter_android_vh_ogki_async_psi_bypass
@@ -222,3 +248,11 @@
   __traceiter_android_vh_ogki_set_wifi_state_disconnect
   __traceiter_android_vh_ogki_kmem_cache_create_usercopy
   __tracepoint_android_vh_ogki_kmem_cache_create_usercopy
+  __traceiter_android_vh_wq_queue_work
+  __traceiter_android_vh_wq_wake_idle_worker
+  __tracepoint_android_vh_wq_queue_work
+  __tracepoint_android_vh_wq_wake_idle_worker
+  __traceiter_android_vh_mutex_unlock_slowpath_bf_wakeq
+  __tracepoint_android_vh_mutex_unlock_slowpath_bf_wakeq
+  __traceiter_android_vh_io_statistics
+  __tracepoint_android_vh_io_statistics

@@ -72,8 +72,6 @@ enum kvm_mode kvm_get_mode(void);
 static inline enum kvm_mode kvm_get_mode(void) { return KVM_MODE_NONE; };
 #endif
 
-DECLARE_STATIC_KEY_FALSE(userspace_irqchip_in_use);
-
 extern unsigned int __ro_after_init kvm_sve_max_vl;
 extern unsigned int __ro_after_init kvm_host_sve_max_vl;
 int __init kvm_arm_init_sve(void);
@@ -231,6 +229,8 @@ struct kvm_pinned_page {
 	u8			order;
 	u16			pins;
 };
+
+#define KVM_DUMMY_PPAGE ((struct kvm_pinned_page *)-1)
 
 typedef unsigned int pkvm_handle_t;
 
