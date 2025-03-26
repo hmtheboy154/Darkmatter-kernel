@@ -54,6 +54,11 @@
 #include <linux/pci.h>
 #include <linux/version.h>
 
+static int vmwgfx_modeset = -1;
+
+MODULE_PARM_DESC(modeset, "Disable/Enable modesetting");
+module_param_named(modeset, vmwgfx_modeset, int, 0400);
+
 #define VMWGFX_DRIVER_DESC "Linux drm driver for VMware graphics devices"
 
 /*
@@ -1643,6 +1648,12 @@ static int vmw_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct vmw_private *vmw;
 	int ret;
+
+	if (drm_firmware_drivers_only() && vmwgfx_modeset == -1)
+		return -EINVAL;
+
+	if (vmwgfx_modeset == 0)
+		return -EINVAL;
 
 	ret = drm_aperture_remove_conflicting_pci_framebuffers(pdev, &driver);
 	if (ret)

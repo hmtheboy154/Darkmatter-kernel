@@ -37,6 +37,12 @@
 #include <drm/drm_sysfs.h>
 #include <drm/drm_edid.h>
 
+static char *force_resolution = NULL;
+static int force_resolution_width = 0;
+static int force_resolution_height = 0;
+module_param(force_resolution, charp, 0600);
+MODULE_PARM_DESC(force_resolution, "Force resolution");
+
 void vmw_du_cleanup(struct vmw_display_unit *du)
 {
 	struct vmw_private *dev_priv = vmw_priv(du->primary.dev);
@@ -1326,10 +1332,13 @@ static int vmw_kms_new_framebuffer_surface(struct vmw_private *dev_priv,
 
 	switch (mode_cmd->pixel_format) {
 	case DRM_FORMAT_ARGB8888:
-		format = SVGA3D_A8R8G8B8;
+		format = SVGA3D_B8G8R8A8_UNORM;
 		break;
 	case DRM_FORMAT_XRGB8888:
-		format = SVGA3D_X8R8G8B8;
+		format = SVGA3D_B8G8R8X8_UNORM;
+		break;
+	case DRM_FORMAT_ABGR8888:
+		format = SVGA3D_R8G8B8A8_UNORM;
 		break;
 	case DRM_FORMAT_RGB565:
 		format = SVGA3D_R5G6B5;
@@ -1438,11 +1447,17 @@ static int vmw_create_bo_proxy(struct drm_device *dev,
 
 	switch (mode_cmd->pixel_format) {
 	case DRM_FORMAT_ARGB8888:
-	case DRM_FORMAT_XRGB8888:
-		format = SVGA3D_X8R8G8B8;
+	        format = SVGA3D_B8G8R8A8_UNORM;
 		bytes_pp = 4;
 		break;
-
+	case DRM_FORMAT_XRGB8888:
+		format = SVGA3D_B8G8R8X8_UNORM;
+		bytes_pp = 4;
+		break;
+	case DRM_FORMAT_ABGR8888:
+		format = SVGA3D_R8G8B8A8_UNORM;
+		bytes_pp = 4;
+		break;
 	case DRM_FORMAT_RGB565:
 	case DRM_FORMAT_XRGB1555:
 		format = SVGA3D_R5G6B5;
@@ -2059,6 +2074,23 @@ int vmw_kms_init(struct vmw_private *dev_priv)
 	dev->mode_config.max_width = dev_priv->texture_max_width;
 	dev->mode_config.max_height = dev_priv->texture_max_height;
 	dev->mode_config.preferred_depth = dev_priv->assume_16bpp ? 16 : 32;
+
+	if (force_resolution != NULL) {
+		sscanf(force_resolution, "%dx%d", &force_resolution_width,
+				&force_resolution_height);
+		if (force_resolution_width >= dev->mode_config.min_width &&
+			force_resolution_height >= dev->mode_config.min_height &&
+			force_resolution_width <= dev->mode_config.max_width &&
+			force_resolution_height <= dev->mode_config.max_height) {
+			DRM_INFO("Force resolution to %dx%d\n",
+				force_resolution_width, force_resolution_height);
+		} else {
+			DRM_ERROR("Invalid force resolution %dx%d\n",
+				force_resolution_width, force_resolution_height);
+			force_resolution_width = 0;
+			force_resolution_height = 0;
+		}
+	}
 
 	drm_mode_create_suggested_offset_properties(dev);
 	vmw_kms_create_hotplug_mode_update_property(dev_priv);
@@ -2905,11 +2937,20 @@ int vmw_connector_get_modes(struct drm_connector *connector)
 
 	mode->hdisplay = du->pref_width;
 	mode->vdisplay = du->pref_height;
+	if (force_resolution_width && force_resolution_height) {
+		mode->hdisplay = force_resolution_width;
+		mode->vdisplay = force_resolution_height;
+	}
 	vmw_guess_mode_timing(mode);
 	drm_mode_set_name(mode);
 
 	drm_mode_probed_add(connector, mode);
 	drm_dbg_kms(dev, "preferred mode " DRM_MODE_FMT "\n", DRM_MODE_ARG(mode));
+
+	num_modes = 1;
+
+	if (force_resolution_width && force_resolution_height)
+		goto out;
 
 	/* Probe connector for all modes not exceeding our geom limits */
 	max_width  = dev_priv->texture_max_width;
@@ -2920,7 +2961,8 @@ int vmw_connector_get_modes(struct drm_connector *connector)
 		max_height = min(dev_priv->stdu_max_height, max_height);
 	}
 
-	num_modes = 1 + drm_add_modes_noedid(connector, max_width, max_height);
+	num_modes += drm_add_modes_noedid(connector, max_width, max_height);
 
+out:
 	return num_modes;
 }
