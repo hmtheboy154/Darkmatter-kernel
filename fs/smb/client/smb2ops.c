@@ -2132,7 +2132,7 @@ smb3_enum_snapshots(const unsigned int xid, struct cifs_tcon *tcon,
 			NULL, 0 /* no input data */, max_response_size,
 			(char **)&retbuf,
 			&ret_data_len);
-	cifs_dbg(FYI, "enum snaphots ioctl returned %d and ret buflen is %d\n",
+	cifs_dbg(FYI, "enum snapshots ioctl returned %d and ret buflen is %d\n",
 			rc, ret_data_len);
 	if (rc)
 		return rc;
@@ -3540,7 +3540,7 @@ static long smb3_simple_falloc(struct file *file, struct cifs_tcon *tcon,
 		/*
 		 * At this point, we are trying to fallocate an internal
 		 * regions of a sparse file. Since smb2 does not have a
-		 * fallocate command we have two otions on how to emulate this.
+		 * fallocate command we have two options on how to emulate this.
 		 * We can either turn the entire file to become non-sparse
 		 * which we only do if the fallocate is for virtually
 		 * the whole file,  or we can overwrite the region with zeroes
@@ -4271,6 +4271,7 @@ crypt_message(struct TCP_Server_Info *server, int num_rqst,
 	u8 key[SMB3_ENC_DEC_KEY_SIZE];
 	struct aead_request *req;
 	u8 *iv;
+	DECLARE_CRYPTO_WAIT(wait);
 	unsigned int crypt_len = le32_to_cpu(tr_hdr->OriginalMessageSize);
 	void *creq;
 	size_t sensitive_size;
@@ -4321,7 +4322,11 @@ crypt_message(struct TCP_Server_Info *server, int num_rqst,
 	aead_request_set_crypt(req, sg, sg, crypt_len, iv);
 	aead_request_set_ad(req, assoc_data_len);
 
-	rc = enc ? crypto_aead_encrypt(req) : crypto_aead_decrypt(req);
+	aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
+				  crypto_req_done, &wait);
+
+	rc = crypto_wait_req(enc ? crypto_aead_encrypt(req)
+				: crypto_aead_decrypt(req), &wait);
 
 	if (!rc && enc)
 		memcpy(&tr_hdr->Signature, sign, SMB2_SIGNATURE_SIZE);
