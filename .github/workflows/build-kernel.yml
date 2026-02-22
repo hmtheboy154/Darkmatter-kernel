@@ -1,0 +1,82 @@
+name: Build Darkmatter (Gloria) + KSU Next + SusFS + Xanmod
+
+on:
+  workflow_dispatch:
+    inputs:
+      defconfig:
+        description: 'Tên file defconfig'
+        required: true
+        default: 'android-x86_64_defconfig'
+
+jobs:
+  build-kernel:
+    name: Compile bzImage
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev curl wget gcc-multilib g++-multilib
+
+      - name: Apply Xanmod Patch (Tùy chọn)
+        run: |
+          # LƯU Ý: Nếu source Darkmatter đã có sẵn Xanmod, lệnh này có thể báo lỗi conflict.
+          # Lệnh '|| true' giúp workflow không bị dừng nếu patch bị trùng.
+          echo "Tải và ép patch Xanmod 6.1.112..."
+          wget -q https://gitlab.com/xanmod/linux-patches/-/raw/master/linux-6.1.y-xanmod/patch-6.1.112-xanmod1.xz
+          xz -d patch-6.1.112-xanmod1.xz
+          patch -p1 --forward < patch-6.1.112-xanmod1 || true
+
+      - name: Inject KernelSU Next
+        run: |
+          echo "Bơm mã nguồn KSU Next..."
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -
+
+      - name: Inject SusFS (Xóa dấu vết KSU)
+        run: |
+          echo "Bơm SusFS vào Kernel tree..."
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-6.1
+          
+          # Patch các file VFS của kernel để giấu OverlayFS
+          cp -rp susfs4ksu/kernel_patches/fs/* fs/
+          cp -rp susfs4ksu/kernel_patches/include/linux/* include/linux/
+          
+          # Patch riêng cho KSU Next
+          patch -p1 --forward < susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
+
+      - name: Configure Kernel
+        run: |
+          echo "Nạp config mặc định..."
+          make ${{ github.event.inputs.defconfig }}
+          
+          echo "Bật các cờ kprobes, overlayfs và susfs..."
+          scripts/config --enable CONFIG_KPROBES
+          scripts/config --enable CONFIG_OVERLAY_FS
+          scripts/config --enable CONFIG_MODULES
+          scripts/config --enable CONFIG_KSU_SUSFS # Bật cờ tàng hình SusFS
+
+          # Bật KPM (KernelPatch Management) của SukiSU
+          scripts/config --enable CONFIG_KPM
+
+          # Bật KALLSYMS (Yêu cầu bắt buộc của SukiSU cho thiết bị Non-GKI)
+          scripts/config --enable CONFIG_KALLSYMS
+          scripts/config --enable CONFIG_KALLSYMS_ALL
+          
+          make olddefconfig
+
+      - name: Compile bzImage (Đốt CPU)
+        run: |
+          make -j$(nproc) bzImage
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bzImage-gloria-ultimate
+          path: arch/x86/boot/bzImage
+          retention-days: 7
