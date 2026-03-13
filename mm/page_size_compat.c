@@ -17,7 +17,11 @@
 #include <linux/perf_event.h>
 
 #define MIN_PAGE_SHIFT_COMPAT (PAGE_SHIFT + 1)
+#ifdef CONFIG_FORCE_4K_MAX_PAGE_SIZE
+#define MAX_PAGE_SHIFT_COMPAT 12 /* Max of 4KB */
+#else
 #define MAX_PAGE_SHIFT_COMPAT 16 /* Max of 64KB */
+#endif
 #define __MMAP_RND_BITS(x)      (x - (__PAGE_SHIFT - PAGE_SHIFT))
 
 DEFINE_STATIC_KEY_FALSE(page_shift_compat_enabled);

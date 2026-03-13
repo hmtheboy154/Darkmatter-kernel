@@ -21,7 +21,12 @@
 
 #include <asm/page.h>
 
+#ifdef CONFIG_FORCE_4K_MAX_PAGE_SIZE
+#define __MAX_PAGE_SHIFT		12
+#else
 #define __MAX_PAGE_SHIFT		14
+#endif
+
 #define __MAX_PAGE_SIZE		(_AC(1, UL) << __MAX_PAGE_SHIFT)
 #define __MAX_PAGE_MASK		(~(__MAX_PAGE_SIZE - 1))
 

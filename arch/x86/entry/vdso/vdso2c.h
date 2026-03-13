@@ -13,7 +13,11 @@
  *
  * It converts the vdso shared lib to a C array.
  */
+#ifdef CONFIG_FORCE_4K_MAX_PAGE_SIZE
+#define __MAX_PAGE_SIZE		4096
+#else
 #define __MAX_PAGE_SIZE		16384
+#endif
 
 static void BITSFUNC(copy)(FILE *outfile, const unsigned char *data, size_t len)
 {
