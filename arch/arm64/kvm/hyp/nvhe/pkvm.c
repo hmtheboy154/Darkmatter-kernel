@@ -447,8 +447,12 @@ struct pkvm_hyp_vcpu *pkvm_get_loaded_hyp_vcpu(void)
 
 static void pkvm_vcpu_init_features_from_host(struct pkvm_hyp_vcpu *hyp_vcpu)
 {
+	struct pkvm_hyp_vm *hyp_vm = pkvm_hyp_vcpu_to_hyp_vm(hyp_vcpu);
 	struct kvm_vcpu *host_vcpu = hyp_vcpu->host_vcpu;
 	DECLARE_BITMAP(allowed_features, KVM_VCPU_MAX_FEATURES);
+
+	/* Preserve the vgic model so that GICv3 emulation works */
+	hyp_vm->kvm.arch.vgic.vgic_model = hyp_vm->host_kvm->arch.vgic.vgic_model;
 
 	/* No restrictions for non-protected VMs. */
 	if (!pkvm_hyp_vcpu_is_protected(hyp_vcpu)) {
@@ -662,11 +666,18 @@ static int init_pkvm_hyp_vcpu(struct pkvm_hyp_vcpu *hyp_vcpu,
 {
 	int ret = 0;
 	u32 mp_state;
+	struct kvm_hyp_req *hyp_reqs;
 
 	if (hyp_pin_shared_mem(host_vcpu, host_vcpu + 1))
 		return -EBUSY;
 
-	hyp_vcpu->vcpu.arch.hyp_reqs = kern_hyp_va(host_vcpu->arch.hyp_reqs);
+	hyp_reqs = READ_ONCE(host_vcpu->arch.hyp_reqs);
+	if (!PAGE_ALIGNED(hyp_reqs)) {
+		hyp_unpin_shared_mem(host_vcpu, host_vcpu + 1);
+		return -EINVAL;
+	}
+
+	hyp_vcpu->vcpu.arch.hyp_reqs = kern_hyp_va(hyp_reqs);
 	if (hyp_pin_shared_mem(hyp_vcpu->vcpu.arch.hyp_reqs,
 			       hyp_vcpu->vcpu.arch.hyp_reqs + 1)) {
 		hyp_unpin_shared_mem(host_vcpu, host_vcpu + 1);
@@ -829,6 +840,8 @@ int __pkvm_init_vm(struct kvm *host_kvm, unsigned long pgd_hva)
 
 	ret = -EINVAL;
 	pgd_size = kvm_pgtable_stage2_pgd_size(host_mmu.arch.vtcr);
+	if (!IS_ALIGNED(pgd_hva, pgd_size))
+		goto err_free_last_ran;
 	pgd = map_donated_memory_noclear(pgd_hva, pgd_size);
 	if (!pgd)
 		goto err_free_last_ran;

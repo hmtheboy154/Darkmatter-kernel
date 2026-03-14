@@ -58,6 +58,7 @@
 #include "autogroup.h"
 
 #include <trace/hooks/sched.h>
+#include <trace/hooks/dtask.h>
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_stat_runtime);
 
@@ -981,6 +982,12 @@ found:
 	if (!best || (curr && entity_before(curr, best)))
 		best = curr;
 
+	/* EEVDF search sched entity fail, so picking leftmost */
+	if (!best) {
+		best = __pick_first_entity(cfs_rq);
+		printk_deferred("EEVDF scheduling fail, picking leftmost\n");
+	}
+
 	return best;
 }
 
@@ -1046,6 +1053,11 @@ static void update_deadline(struct cfs_rq *cfs_rq, struct sched_entity *se)
 	 * The task has consumed its request, reschedule.
 	 */
 	if (cfs_rq->nr_running > 1) {
+		trace_android_vh_resched_curr_lazy(rq_of(cfs_rq), &skip_preempt);
+
+		if (skip_preempt)
+			return;
+
 		resched_curr(rq_of(cfs_rq));
 		clear_buddies(cfs_rq, se);
 	}
@@ -4820,7 +4832,7 @@ static inline unsigned long cfs_rq_load_avg(struct cfs_rq *cfs_rq)
 	return cfs_rq->avg.load_avg;
 }
 
-static int newidle_balance(struct rq *this_rq, struct rq_flags *rf);
+static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf);
 
 static inline unsigned long task_util(struct task_struct *p)
 {
@@ -5167,7 +5179,7 @@ attach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) {}
 static inline void
 detach_entity_load_avg(struct cfs_rq *cfs_rq, struct sched_entity *se) {}
 
-static inline int newidle_balance(struct rq *rq, struct rq_flags *rf)
+static inline int sched_balance_newidle(struct rq *rq, struct rq_flags *rf)
 {
 	return 0;
 }
@@ -5539,6 +5551,13 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 	 * validating it and just reschedule.
 	 */
 	if (queued) {
+		bool skip_preempt = false;
+
+		trace_android_vh_resched_curr_lazy(rq_of(cfs_rq), &skip_preempt);
+
+		if (skip_preempt)
+			return;
+
 		resched_curr(rq_of(cfs_rq));
 		return;
 	}
@@ -8313,10 +8332,11 @@ static void task_dead_fair(struct task_struct *p)
 static int
 balance_fair(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 {
+	trace_android_rvh_balance_fair(rq, prev, rf);
 	if (rq->nr_running)
 		return 1;
 
-	return newidle_balance(rq, rf) != 0;
+	return sched_balance_newidle(rq, rf) != 0;
 }
 #endif /* CONFIG_SMP */
 
@@ -8420,6 +8440,11 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
 	return;
 
 preempt:
+	trace_android_vh_resched_curr_lazy(rq_of(cfs_rq), &ignore);
+
+	if (ignore)
+		return;
+
 	resched_curr(rq);
 }
 
@@ -8465,6 +8490,7 @@ pick_next_task_fair(struct rq *rq, struct task_struct *prev, struct rq_flags *rf
 	int new_tasks;
 	bool repick = false;
 
+	trace_android_rvh_before_pick_task_fair(rq, &p, &se, prev, rf);
 again:
 	if (!sched_fair_runnable(rq))
 		goto idle;
@@ -8472,6 +8498,9 @@ again:
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	if (!prev || prev->sched_class != &fair_sched_class)
 		goto simple;
+
+	if (p)
+		goto put_prev_set_next;
 
 	/*
 	 * Because of the set_next_buddy() in dequeue_task_fair() it is rather
@@ -8518,6 +8547,7 @@ again:
 
 	p = task_of(se);
 	trace_android_rvh_replace_next_task_fair(rq, &p, &se, &repick, false, prev);
+put_prev_set_next:
 	/*
 	 * Since we haven't yet done put_prev_entity and if the selected task
 	 * is a different task than we started out with, try and touch the
@@ -8581,21 +8611,21 @@ done: __maybe_unused;
 	return p;
 
 idle:
-	if (!rf)
-		return NULL;
+	if (rf) {
+		new_tasks = sched_balance_newidle(rq, rf);
 
-	new_tasks = newidle_balance(rq, rf);
+		/*
+		 * Because sched_balance_newidle() releases (and re-acquires)
+		 * rq->lock, it is possible for any higher priority task to
+		 * appear. In that case we must re-start the pick_next_entity()
+		 * loop.
+		 */
+		if (new_tasks < 0)
+			return RETRY_TASK;
 
-	/*
-	 * Because newidle_balance() releases (and re-acquires) rq->lock, it is
-	 * possible for any higher priority task to appear. In that case we
-	 * must re-start the pick_next_entity() loop.
-	 */
-	if (new_tasks < 0)
-		return RETRY_TASK;
-
-	if (new_tasks > 0)
-		goto again;
+		if (new_tasks > 0)
+			goto again;
+	}
 
 	/*
 	 * rq is about to be idle, check if we need to update the
@@ -8654,7 +8684,19 @@ static void yield_task_fair(struct rq *rq)
 	 */
 	rq_clock_skip_update(rq);
 
-	se->deadline += calc_delta_fair(se->slice, se);
+	/*
+	 * Forfeit the remaining vruntime, only if the entity is eligible. This
+	 * condition is necessary because in core scheduling we prefer to run
+	 * ineligible tasks rather than force idling. If this happens we may
+	 * end up in a loop where the core scheduler picks the yielding task,
+	 * which yields immediately again; without the condition the vruntime
+	 * ends up quickly running away.
+	 */
+	if (entity_eligible(cfs_rq, se)) {
+		se->vruntime = se->deadline;
+		se->deadline += calc_delta_fair(se->slice, se);
+		update_min_vruntime(cfs_rq);
+	}
 }
 
 static bool yield_to_task_fair(struct rq *rq, struct task_struct *p)
@@ -11310,7 +11352,7 @@ static int need_active_balance(struct lb_env *env)
 	return 0;
 }
 
-static int active_load_balance_cpu_stop(void *data);
+int active_load_balance_cpu_stop(void *data);
 
 static int should_we_balance(struct lb_env *env)
 {
@@ -11632,7 +11674,7 @@ out_one_pinned:
 	ld_moved = 0;
 
 	/*
-	 * newidle_balance() disregards balance intervals, so we could
+	 * sched_balance_newidle() disregards balance intervals, so we could
 	 * repeatedly reach this code, which would lead to balance_interval
 	 * skyrocketing in a short amount of time. Skip the balance_interval
 	 * increase logic to avoid that.
@@ -11692,7 +11734,7 @@ update_next_balance(struct sched_domain *sd, unsigned long *next_balance)
  * least 1 task to be running on each physical CPU where possible, and
  * avoids physical / logical imbalances.
  */
-static int active_load_balance_cpu_stop(void *data)
+int active_load_balance_cpu_stop(void *data)
 {
 	struct rq *busiest_rq = data;
 	int busiest_cpu = cpu_of(busiest_rq);
@@ -11770,6 +11812,7 @@ out_unlock:
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(active_load_balance_cpu_stop);
 
 static DEFINE_SPINLOCK(balancing);
 
@@ -11784,22 +11827,25 @@ void update_max_interval(void)
 
 static inline bool update_newidle_cost(struct sched_domain *sd, u64 cost)
 {
+	unsigned long next_decay = sd->last_decay_max_lb_cost + HZ;
+	unsigned long now = jiffies;
+
 	if (cost > sd->max_newidle_lb_cost) {
 		/*
 		 * Track max cost of a domain to make sure to not delay the
 		 * next wakeup on the CPU.
 		 */
 		sd->max_newidle_lb_cost = cost;
-		sd->last_decay_max_lb_cost = jiffies;
-	} else if (time_after(jiffies, sd->last_decay_max_lb_cost + HZ)) {
+		sd->last_decay_max_lb_cost = now;
+
+	} else if (time_after(now, next_decay)) {
 		/*
 		 * Decay the newidle max times by ~1% per second to ensure that
 		 * it is not outdated and the current max cost is actually
 		 * shorter.
 		 */
 		sd->max_newidle_lb_cost = (sd->max_newidle_lb_cost * 253) / 256;
-		sd->last_decay_max_lb_cost = jiffies;
-
+		sd->last_decay_max_lb_cost = now;
 		return true;
 	}
 
@@ -12406,7 +12452,7 @@ static inline void nohz_newidle_balance(struct rq *this_rq) { }
 #endif /* CONFIG_NO_HZ_COMMON */
 
 /*
- * newidle_balance is called by schedule() if this_cpu is about to become
+ * sched_balance_newidle is called by schedule() if this_cpu is about to become
  * idle. Attempts to pull tasks from other CPUs.
  *
  * Returns:
@@ -12414,7 +12460,7 @@ static inline void nohz_newidle_balance(struct rq *this_rq) { }
  *     0 - failed, no new tasks
  *   > 0 - success, new (fair) tasks present
  */
-static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
+static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 {
 	unsigned long next_balance = jiffies + HZ;
 	int this_cpu = this_rq->cpu;
@@ -12458,14 +12504,15 @@ static int newidle_balance(struct rq *this_rq, struct rq_flags *rf)
 
 	rcu_read_lock();
 	sd = rcu_dereference_check_sched_domain(this_rq->sd);
+	if (!sd) {
+		rcu_read_unlock();
+		goto out;
+	}
 
 	if (!READ_ONCE(this_rq->rd->overload) ||
-	    (sd && this_rq->avg_idle < sd->max_newidle_lb_cost)) {
-
-		if (sd)
-			update_next_balance(sd, &next_balance);
+	    this_rq->avg_idle < sd->max_newidle_lb_cost) {
+		update_next_balance(sd, &next_balance);
 		rcu_read_unlock();
-
 		goto out;
 	}
 	rcu_read_unlock();

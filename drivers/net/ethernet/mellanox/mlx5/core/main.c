@@ -627,6 +627,9 @@ static int handle_hca_cap(struct mlx5_core_dev *dev, void *set_ctx)
 	if (MLX5_CAP_GEN_MAX(dev, pci_sync_for_fw_update_with_driver_unload))
 		MLX5_SET(cmd_hca_cap, set_hca_cap,
 			 pci_sync_for_fw_update_with_driver_unload, 1);
+	if (MLX5_CAP_GEN_MAX(dev, pcie_reset_using_hotreset_method))
+		MLX5_SET(cmd_hca_cap, set_hca_cap,
+			 pcie_reset_using_hotreset_method, 1);
 
 	if (MLX5_CAP_GEN_MAX(dev, num_vhca_ports))
 		MLX5_SET(cmd_hca_cap,
@@ -2161,6 +2164,7 @@ static void shutdown(struct pci_dev *pdev)
 
 	mlx5_core_info(dev, "Shutdown was called\n");
 	set_bit(MLX5_BREAK_FW_WAIT, &dev->intf_state);
+	mlx5_drain_fw_reset(dev);
 	mlx5_drain_health_wq(dev);
 	err = mlx5_try_fast_unload(dev);
 	if (err)
