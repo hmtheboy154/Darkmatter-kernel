@@ -3594,4 +3594,5 @@ static inline bool cpu_busy_with_softirqs(int cpu)
 }
 #endif /* CONFIG_RT_SOFTIRQ_AWARE_SCHED */
 
+
 #endif /* _KERNEL_SCHED_SCHED_H */

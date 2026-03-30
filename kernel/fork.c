@@ -122,6 +122,7 @@ extern int unprivileged_userns_clone;
 #undef CREATE_TRACE_POINTS
 #include <trace/hooks/sched.h>
 #include <trace/hooks/dtask.h>
+#include <trace/hooks/mm.h>
 /*
  * Minimum number of threads to boot the kernel
  */
@@ -962,6 +963,7 @@ void __mmdrop(struct mm_struct *mm)
 	mm_destroy_cid(mm);
 	percpu_counter_destroy_many(mm->rss_stat, NR_MM_COUNTERS);
 
+	trace_android_vh_mm_free(mm);
 	free_mm(mm);
 }
 EXPORT_SYMBOL_GPL(__mmdrop);
@@ -1239,7 +1241,7 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 #endif
 	android_init_vendor_data(tsk, 1);
 	android_init_oem_data(tsk, 1);
-
+	android_init_dynamic_vendor_data(tsk);
 	trace_android_vh_dup_task_struct(tsk, orig);
 	return tsk;
 
@@ -1354,6 +1356,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 
 	mm->user_ns = get_user_ns(user_ns);
 	lru_gen_init_mm(mm);
+	trace_android_vh_mm_init(mm);
 	return mm;
 
 fail_pcpu:
