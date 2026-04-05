@@ -147,6 +147,7 @@
   dma_map_sg_attrs
   dma_set_coherent_mask
   dma_set_mask
+  dma_sync_single_for_device
   dma_unmap_page_attrs
   dma_unmap_sg_attrs
   do_trace_netlink_extack
@@ -188,6 +189,7 @@
   get_net_ns_by_fd
   get_net_ns_by_pid
   get_random_bytes
+  get_zeroed_page
   gic_nonsecure_priorities
   gpiochip_add_data_with_key
   gpiochip_find
@@ -404,6 +406,7 @@
   phy_ethtool_nway_reset
   phy_ethtool_set_eee
   phy_ethtool_set_link_ksettings
+  phy_ethtool_set_wol
   phy_exit
   phy_init
   phy_init_eee
@@ -415,6 +418,7 @@
   phy_start
   phy_stop
   phy_trigger_machine
+  platform_device_put
   platform_device_register_full
   platform_device_unregister
   __platform_driver_probe
@@ -783,7 +787,6 @@
   dma_sync_single_for_cpu
   of_get_ethdev_address
   of_platform_populate
-  platform_get_irq_byname
   __skb_pad
   synchronize_irq
 
@@ -798,6 +801,9 @@
 
 # required by bcm7038_wdt.ko
   devm_watchdog_register_device
+
+# required by bcm74110-rng.ko
+  devm_hwrng_register
 
 # required by bcm7xxx.ko
   genphy_restart_aneg
@@ -880,6 +886,21 @@
 # required by brcmstb_gisb.ko
   __sw_hweight64
 
+# required by brcmstb_iommu.ko
+  devm_get_free_pages
+  iommu_device_register
+  iommu_device_sysfs_add
+  iommu_device_sysfs_remove
+  iommu_device_unlink
+  iommu_device_unregister
+  iommu_fwspec_init
+  iommu_group_alloc
+  iommu_group_put
+  iommu_group_ref_get
+  pci_device_group
+  pci_find_host_bridge
+  platform_get_irq_byname
+
 # required by brcmstb_memc.ko
   of_match_device
 
@@ -888,9 +909,6 @@
   genphy_c37_config_aneg
   genphy_c37_read_status
   genphy_suspend
-
-# required by btbcm.ko
-  efi
 
 # required by btsdio.ko
   sdio_claim_host
@@ -1063,7 +1081,6 @@
   phy_connect_direct
   phy_ethtool_ksettings_get
   phy_ethtool_ksettings_set
-  phy_ethtool_set_wol
   phy_get_pause
   phy_init_hw
   phy_resume
@@ -1075,8 +1092,8 @@
   platform_device_add_data
   platform_device_add_resources
   platform_device_alloc
-  platform_device_put
   softnet_data
+  netdev_sw_irq_coalesce_default_on
 
 # required by gpio-brcmstb.ko
   bgpio_init
@@ -1402,10 +1419,12 @@
   bitmap_find_free_region
   bitmap_release_region
   devm_pci_alloc_host_bridge
+  devm_phy_optional_get
   irq_chip_ack_parent
   irq_domain_get_irq_data
   irq_domain_set_info
   of_pci_get_max_link_speed
+  of_property_read_variable_u16_array
   of_property_read_variable_u64_array
   pcie_link_speed
   pci_generic_config_read
@@ -1428,6 +1447,12 @@
 
 # required by phy-brcm-sata.ko
   of_phy_simple_xlate
+
+# required by phy-brcm-pcie.ko
+  __copy_overflow
+  debugfs_initialized
+  regmap_read
+  strsep
 
 # required by phy-brcm-usb-dvr.ko
   brcmstb_get_family_id
@@ -1580,6 +1605,7 @@
   sdhci_set_clock
   sdhci_set_uhs_signaling
   sdhci_setup_host
+  __hwspin_trylock
 
 # required by slcan.ko
   hex_asc_upper
@@ -1594,7 +1620,6 @@
   dma_get_slave_caps
   dma_release_channel
   dma_request_chan
-  dma_sync_single_for_device
   empty_zero_page
   gpiochip_request_own_desc
   __of_get_address
@@ -1689,7 +1714,6 @@
   device_find_child_by_name
   device_for_each_child
   _find_first_zero_bit
-  get_zeroed_page
   rtnl_configure_link
   rtnl_create_link
 
@@ -1740,10 +1764,20 @@
   unlock_page
   unregister_shrinker
 
+# required by pinctrl_bcm2835.ko
+  gpiochip_get_desc
+  gpiochip_free_own_desc
+
 # TODO: external drivers
 
 # required by nexusmem.ko
   restore_online_page_callback
+  __alloc_pages_bulk
+  __rt_mutex_init
+  rt_mutex_lock
+  rt_mutex_trylock
+  rt_mutex_unlock
+  rt_mutex_lock_interruptible
 
 # required by nexus.ko
   recalc_sigpending
@@ -1751,3 +1785,11 @@
 # required by bstm.ko
   phys_mem_access_prot
   generic_access_phys
+
+# required by bcm_astra.ko
+  strnlen_user
+  tty_buffer_set_limit
+  tty_buffer_request_room
+
+# required by bcm_athena.ko
+  __read_overflow2_field

@@ -22,11 +22,6 @@
 
 #include "power.h"
 
-#ifndef CONFIG_SUSPEND
-suspend_state_t pm_suspend_target_state;
-#define pm_suspend_target_state	(PM_SUSPEND_ON)
-#endif
-
 #define list_for_each_entry_rcu_locked(pos, head, member) \
 	list_for_each_entry_rcu(pos, head, member, \
 		srcu_read_lock_held(&wakeup_srcu))
@@ -288,9 +283,7 @@ EXPORT_SYMBOL_GPL(wakeup_sources_read_unlock);
  */
 struct wakeup_source *wakeup_sources_walk_start(void)
 {
-	struct list_head *ws_head = &wakeup_sources;
-
-	return list_entry_rcu(ws_head->next, struct wakeup_source, entry);
+	return list_first_or_null_rcu(&wakeup_sources, struct wakeup_source, entry);
 }
 EXPORT_SYMBOL_GPL(wakeup_sources_walk_start);
 
@@ -1008,6 +1001,7 @@ unsigned int pm_wakeup_irq(void)
 {
 	return wakeup_irq[0];
 }
+EXPORT_SYMBOL_GPL(pm_wakeup_irq);
 
 /**
  * pm_get_wakeup_count - Read the number of registered wakeup events.

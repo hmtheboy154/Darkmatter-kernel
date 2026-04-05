@@ -62,12 +62,34 @@ static void __init sort_memblock_regions(void)
 static int __init register_memblock_regions(void)
 {
 	struct memblock_region *reg;
+	bool pvmfw_in_mem = false;
 
 	for_each_mem_region(reg) {
 		if (*hyp_memblock_nr_ptr >= HYP_MEMBLOCK_REGIONS)
 			return -ENOMEM;
 
 		hyp_memory[*hyp_memblock_nr_ptr] = *reg;
+		(*hyp_memblock_nr_ptr)++;
+
+		if (!*pvmfw_size || pvmfw_in_mem ||
+			!memblock_addrs_overlap(reg->base, reg->size, *pvmfw_base, *pvmfw_size))
+			continue;
+		/* If the pvmfw region overlaps a memblock, it must be a subset */
+		if (*pvmfw_base < reg->base ||
+				(*pvmfw_base + *pvmfw_size) > (reg->base + reg->size))
+			return -EINVAL;
+		pvmfw_in_mem = true;
+	}
+
+	if (*pvmfw_size && !pvmfw_in_mem) {
+		if (*hyp_memblock_nr_ptr >= HYP_MEMBLOCK_REGIONS)
+			return -ENOMEM;
+
+		hyp_memory[*hyp_memblock_nr_ptr] = (struct memblock_region) {
+			.base   = *pvmfw_base,
+			.size   = *pvmfw_size,
+			.flags  = MEMBLOCK_NOMAP,
+		};
 		(*hyp_memblock_nr_ptr)++;
 	}
 	sort_memblock_regions();
@@ -148,6 +170,12 @@ static int __init register_moveable_regions(void)
 
 	return 0;
 }
+
+static int __init early_hyp_lm_size_mb_cfg(char *arg)
+{
+	return kstrtoull(arg, 10, &kvm_nvhe_sym(hyp_lm_size_mb));
+}
+early_param("kvm-arm.hyp_lm_size_mb", early_hyp_lm_size_mb_cfg);
 
 void __init kvm_hyp_reserve(void)
 {
@@ -262,6 +290,8 @@ static int __pkvm_create_hyp_vm(struct kvm *host_kvm)
 	host_kvm->arch.pkvm.handle = handle;
 
 	total_sz = hyp_vm_sz + last_ran_sz + pgd_sz;
+	atomic64_set(&host_kvm->stat.protected_hyp_mem, total_sz);
+	kvm_account_pgtable_pages(pgd, pgd_sz >> PAGE_SHIFT);
 
 	/* Donate memory for the vcpus at hyp and initialize it. */
 	hyp_vcpu_sz = PAGE_ALIGN(PKVM_HYP_VCPU_SIZE);
@@ -280,18 +310,15 @@ static int __pkvm_create_hyp_vm(struct kvm *host_kvm)
 			goto destroy_vm;
 		}
 
-		total_sz += hyp_vcpu_sz;
-
 		ret = kvm_call_hyp_nvhe(__pkvm_init_vcpu, handle, host_vcpu,
 					hyp_vcpu);
 		if (ret) {
 			free_pages_exact(hyp_vcpu, hyp_vcpu_sz);
 			goto destroy_vm;
 		}
-	}
 
-	atomic64_set(&host_kvm->stat.protected_hyp_mem, total_sz);
-	kvm_account_pgtable_pages(pgd, pgd_sz >> PAGE_SHIFT);
+		atomic64_add(hyp_vcpu_sz, &host_kvm->stat.protected_hyp_mem);
+	}
 
 	return 0;
 

@@ -23,6 +23,9 @@
 #include <trace/events/writeback.h>
 #include "internal.h"
 
+#undef CREATE_TRACE_POINTS
+#include <trace/hooks/vmscan.h>
+
 /*
  * Inode locking rules:
  *
@@ -593,6 +596,7 @@ void dump_mapping(const struct address_space *mapping)
 	struct hlist_node *dentry_first;
 	struct dentry *dentry_ptr;
 	struct dentry dentry;
+	char fname[64] = {};
 	unsigned long ino;
 
 	/*
@@ -628,11 +632,14 @@ void dump_mapping(const struct address_space *mapping)
 		return;
 	}
 
+	if (strncpy_from_kernel_nofault(fname, dentry.d_name.name, 63) < 0)
+		strscpy(fname, "<invalid>", 63);
 	/*
-	 * if dentry is corrupted, the %pd handler may still crash,
-	 * but it's unlikely that we reach here with a corrupt mapping
+	 * Even if strncpy_from_kernel_nofault() succeeded,
+	 * the fname could be unreliable
 	 */
-	pr_warn("aops:%ps ino:%lx dentry name:\"%pd\"\n", a_ops, ino, &dentry);
+	pr_warn("aops:%ps ino:%lx dentry name(?):\"%s\"\n",
+		a_ops, ino, fname);
 }
 
 void clear_inode(struct inode *inode)
@@ -757,6 +764,10 @@ again:
 			continue;
 
 		spin_lock(&inode->i_lock);
+		if (atomic_read(&inode->i_count)) {
+			spin_unlock(&inode->i_lock);
+			continue;
+		}
 		if (inode->i_state & (I_NEW | I_FREEING | I_WILL_FREE)) {
 			spin_unlock(&inode->i_lock);
 			continue;
@@ -854,6 +865,7 @@ static enum lru_status inode_lru_isolate(struct list_head *item,
 {
 	struct list_head *freeable = arg;
 	struct inode	*inode = container_of(item, struct inode, i_lru);
+	bool skip = false;
 
 	/*
 	 * We are inverting the lru lock/inode->i_lock here, so use a
@@ -861,6 +873,12 @@ static enum lru_status inode_lru_isolate(struct list_head *item,
 	 */
 	if (!spin_trylock(&inode->i_lock))
 		return LRU_SKIP;
+
+	trace_android_vh_inode_lru_isolate(inode, &skip);
+	if (skip) {
+		spin_unlock(&inode->i_lock);
+		return LRU_SKIP;
+	}
 
 	/*
 	 * Inodes can get referenced, redirtied, or repopulated while

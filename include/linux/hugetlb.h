@@ -233,12 +233,13 @@ void hugetlb_vma_lock_release(struct kref *kref);
 
 int pmd_huge(pmd_t pmd);
 int pud_huge(pud_t pud);
-unsigned long hugetlb_change_protection(struct vm_area_struct *vma,
+long hugetlb_change_protection(struct vm_area_struct *vma,
 		unsigned long address, unsigned long end, pgprot_t newprot,
 		unsigned long cp_flags);
 
 bool is_hugetlb_entry_migration(pte_t pte);
 void hugetlb_unshare_all_pmds(struct vm_area_struct *vma);
+void hugetlb_split(struct vm_area_struct *vma, unsigned long addr);
 
 #else /* !CONFIG_HUGETLB_PAGE */
 
@@ -446,7 +447,7 @@ static inline void move_hugetlb_state(struct page *oldpage,
 {
 }
 
-static inline unsigned long hugetlb_change_protection(
+static inline long hugetlb_change_protection(
 			struct vm_area_struct *vma, unsigned long address,
 			unsigned long end, pgprot_t newprot,
 			unsigned long cp_flags)
@@ -471,6 +472,8 @@ static inline vm_fault_t hugetlb_fault(struct mm_struct *mm,
 }
 
 static inline void hugetlb_unshare_all_pmds(struct vm_area_struct *vma) { }
+
+static inline void hugetlb_split(struct vm_area_struct *vma, unsigned long addr) {}
 
 #endif /* !CONFIG_HUGETLB_PAGE */
 /*

@@ -32,13 +32,15 @@
 #ifndef _ANDROID_KABI_H
 #define _ANDROID_KABI_H
 
+#ifdef CONFIG_ANDROID_KABI_RESERVE
+
 #include <linux/compiler.h>
 #include <linux/stringify.h>
 
 /*
  * Worker macros, don't use these, use the ones without a leading '_'
  */
-
+#ifdef CONFIG_64BIT
 #define __ANDROID_KABI_CHECK_SIZE_ALIGN(_orig, _new)				\
 	union {									\
 		_Static_assert(sizeof(struct{_new;}) <= sizeof(struct{_orig;}),	\
@@ -52,6 +54,9 @@
 			       " is not aligned the same as "			\
 			       __stringify(_new) );				\
 	}
+#else
+#define __ANDROID_KABI_CHECK_SIZE_ALIGN(_orig, _new)
+#endif
 
 #ifdef __GENKSYMS__
 
@@ -84,12 +89,16 @@
  *   number: the "number" of the padding variable in the structure.  Start with
  *   1 and go up.
  */
-#ifdef CONFIG_ANDROID_KABI_RESERVE
 #define ANDROID_KABI_RESERVE(number)	_ANDROID_KABI_RESERVE(number)
-#else
-#define ANDROID_KABI_RESERVE(number)
-#endif
 
+/*
+ * ANDROID_KABI_BACKPORT_OK
+ *   Used to allow padding originally reserved with ANDROID_KABI_RESERVE
+ *   to be used for backports of non-LTS patches by partners. These
+ *   fields can by used by replacing with ANDROID_KABI_BACKPORT_USE()
+ *   for partner backports.
+ */
+#define ANDROID_KABI_BACKPORT_OK(number) ANDROID_KABI_RESERVE(number)
 
 /*
  * Macros to use _after_ the ABI is frozen
@@ -105,6 +114,17 @@
 	_ANDROID_KABI_REPLACE(_ANDROID_KABI_RESERVE(number), _new)
 
 /*
+ * ANDROID_KABI_BACKPORT_USE(number, _new)
+ *   Use a previous padding entry that was defined with
+ *   ANDROID_KABI_BACKPORT_OK(). This is functionally identical
+ *   to ANDROID_KABI_USE() except that it differentiates the
+ *   normal use of KABI fields for LTS from KABI fields that
+ *   were released for use with other backports from upstream.
+ */
+#define ANDROID_KABI_BACKPORT_USE(number, _new) \
+	ANDROID_KABI_USE(number, _new)
+
+/*
  * ANDROID_KABI_USE2(number, _new1, _new2)
  *   Use a previous padding entry that was defined with ANDROID_KABI_RESERVE for
  *   two new variables that fit into 64 bits.  This is good for when you do not
@@ -114,5 +134,14 @@
 #define ANDROID_KABI_USE2(number, _new1, _new2)			\
 	_ANDROID_KABI_REPLACE(_ANDROID_KABI_RESERVE(number), struct{ _new1; _new2; })
 
+#else /* CONFIG_ANDROID_KABI_RESERVE */
+
+#define ANDROID_KABI_RESERVE(number)
+#define ANDROID_KABI_BACKPORT_OK(number)
+#define ANDROID_KABI_USE(number, _new) _new
+#define ANDROID_KABI_BACKPORT_USE(number, _new) _new
+#define ANDROID_KABI_USE2(number, _new1, _new2) _new1; _new2
+
+#endif /* CONFIG_ANDROID_KABI_RESERVE */
 
 #endif /* _ANDROID_KABI_H */

@@ -2127,6 +2127,10 @@ sd_spinup_disk(struct scsi_disk *sdkp)
 				break;	/* unavailable */
 			if (sshdr.asc == 4 && sshdr.ascq == 0x1b)
 				break;	/* sanitize in progress */
+			if (sshdr.asc == 4 && sshdr.ascq == 0x24)
+				break;	/* depopulation in progress */
+			if (sshdr.asc == 4 && sshdr.ascq == 0x25)
+				break;	/* depopulation restoration in progress */
 			/*
 			 * Issue command to spin up drive when not ready
 			 */
@@ -2940,7 +2944,7 @@ static void sd_read_block_characteristics(struct scsi_disk *sdkp)
 	rcu_read_lock();
 	vpd = rcu_dereference(sdkp->device->vpd_pgb1);
 
-	if (!vpd || vpd->len < 8) {
+	if (!vpd || vpd->len <= 8) {
 		rcu_read_unlock();
 	        return;
 	}
@@ -3762,6 +3766,9 @@ static int sd_resume_common(struct device *dev)
 	int ret;
 
 	if (!sdkp)	/* E.g.: runtime resume at the start of sd_probe() */
+		return 0;
+
+	if (!sdkp->device->manage_start_stop)
 		return 0;
 
 	sd_printk(KERN_NOTICE, sdkp, "Starting disk\n");

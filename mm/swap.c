@@ -43,6 +43,9 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/pagemap.h>
 
+#undef CREATE_TRACE_POINTS
+#include <trace/hooks/mm.h>
+
 /* How many pages do we try to swap or page in/out together? */
 int page_cluster;
 
@@ -87,14 +90,6 @@ static void __page_cache_release(struct folio *folio)
 		lruvec_del_folio(lruvec, folio);
 		__folio_clear_lru_flags(folio);
 		unlock_page_lruvec_irqrestore(lruvec, flags);
-	}
-	/* See comment on folio_test_mlocked in release_pages() */
-	if (unlikely(folio_test_mlocked(folio))) {
-		long nr_pages = folio_nr_pages(folio);
-
-		__folio_clear_mlocked(folio);
-		zone_stat_mod_folio(folio, NR_MLOCK, -nr_pages);
-		count_vm_events(UNEVICTABLE_PGCLEARED, nr_pages);
 	}
 }
 
@@ -257,8 +252,8 @@ static void folio_batch_move_lru(struct folio_batch *fbatch, move_fn_t move_fn)
 static void folio_batch_add_and_move(struct folio_batch *fbatch,
 		struct folio *folio, move_fn_t move_fn)
 {
-	if (folio_batch_add(fbatch, folio) && !folio_test_large(folio) &&
-	    !lru_cache_disabled())
+	if (folio_batch_add(fbatch, folio) &&
+	    folio_may_be_lru_cached(folio) && !lru_cache_disabled())
 		return;
 	folio_batch_move_lru(fbatch, move_fn);
 }
@@ -479,6 +474,7 @@ void folio_mark_accessed(struct folio *folio)
 		return;
 	}
 
+	trace_android_vh_mark_folio_accessed(folio);
 	if (!folio_test_referenced(folio)) {
 		folio_set_referenced(folio);
 	} else if (folio_test_unevictable(folio)) {
@@ -523,6 +519,7 @@ void folio_add_lru(struct folio *folio)
 			folio_test_unevictable(folio), folio);
 	VM_BUG_ON_FOLIO(folio_test_lru(folio), folio);
 
+	trace_android_vh_folio_add_lru(folio);
 	/* see the comment in lru_gen_add_folio() */
 	if (lru_gen_enabled() && !folio_test_unevictable(folio) &&
 	    lru_gen_in_fault() && !(current->flags & PF_MEMALLOC))
@@ -1040,18 +1037,6 @@ void release_pages(struct page **pages, int nr)
 
 			lruvec_del_folio(lruvec, folio);
 			__folio_clear_lru_flags(folio);
-		}
-
-		/*
-		 * In rare cases, when truncation or holepunching raced with
-		 * munlock after VM_LOCKED was cleared, Mlocked may still be
-		 * found set here.  This does not indicate a problem, unless
-		 * "unevictable_pgs_cleared" appears worryingly large.
-		 */
-		if (unlikely(folio_test_mlocked(folio))) {
-			__folio_clear_mlocked(folio);
-			zone_stat_sub_folio(folio, NR_MLOCK);
-			count_vm_event(UNEVICTABLE_PGCLEARED);
 		}
 
 		list_add(&folio->lru, &pages_to_free);

@@ -120,6 +120,7 @@
   devm_gpiochip_add_data_with_key
   devm_gpiod_get
   devm_gpiod_get_optional
+  devm_hwspin_lock_request_specific
   devm_ioremap
   devm_ioremap_resource
   devm_ioremap_wc
@@ -154,6 +155,7 @@
   __devm_regmap_init_i2c
   __devm_regmap_init_mmio_clk
   devm_regulator_bulk_get
+  devm_regulator_bulk_get_enable
   devm_regulator_get
   devm_regulator_get_optional
   devm_regulator_register
@@ -268,6 +270,7 @@
   flush_work
   __flush_workqueue
   fortify_panic
+  fput
   free_io_pgtable_ops
   free_irq
   fwnode_handle_put
@@ -299,6 +302,7 @@
   gpiochip_get_data
   gpiochip_remove
   gpiod_get_value_cansleep
+  gpiod_is_active_low
   gpiod_set_consumer_name
   gpiod_set_value
   gpiod_set_value_cansleep
@@ -578,6 +582,7 @@
   prepare_to_wait_event
   print_hex_dump
   _printk
+  __pskb_copy_fclone
   pskb_expand_head
   __pskb_pull_tail
   put_device
@@ -1144,6 +1149,8 @@
   geni_se_rx_dma_unprep
   geni_se_tx_dma_prep
   geni_se_tx_dma_unprep
+  geni_se_rx_init_dma
+  geni_se_tx_init_dma
   i2c_get_dma_safe_msg_buf
   i2c_put_dma_safe_msg_buf
 
@@ -1571,6 +1578,7 @@
   vsnprintf
   ww_mutex_lock
   ww_mutex_lock_interruptible
+  ww_mutex_trylock
   ww_mutex_unlock
 
 # required by msm_serial.ko
@@ -1951,6 +1959,7 @@
 # required by snd-soc-lpass-va-macro.ko
   clk_hw_get_clk
   dapm_regulator_event
+  devm_clk_hw_get_clk
   regcache_sync_region
 
 # required by snd-soc-qcom-common.ko

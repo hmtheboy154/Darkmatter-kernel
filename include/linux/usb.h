@@ -713,13 +713,12 @@ struct usb_device {
 
 	unsigned long active_duration;
 
-#ifdef CONFIG_PM
 	unsigned long connect_time;
 
 	unsigned do_remote_wakeup:1;
 	unsigned reset_resume:1;
 	unsigned port_is_suspended:1;
-#endif
+
 	struct wusb_dev *wusb_dev;
 	int slot_id;
 	struct usb2_lpm_parameters l1_params;
@@ -1831,14 +1830,18 @@ void usb_buffer_unmap_sg(const struct usb_device *dev, int is_in,
  *                         SYNCHRONOUS CALL SUPPORT                  *
  *-------------------------------------------------------------------*/
 
+/* Maximum value allowed for timeout in synchronous routines below */
+#define USB_MAX_SYNCHRONOUS_TIMEOUT		60000	/* ms */
+
 extern int usb_control_msg(struct usb_device *dev, unsigned int pipe,
 	__u8 request, __u8 requesttype, __u16 value, __u16 index,
 	void *data, __u16 size, int timeout);
 extern int usb_interrupt_msg(struct usb_device *usb_dev, unsigned int pipe,
 	void *data, int len, int *actual_length, int timeout);
 extern int usb_bulk_msg(struct usb_device *usb_dev, unsigned int pipe,
-	void *data, int len, int *actual_length,
-	int timeout);
+	void *data, int len, int *actual_length, int timeout);
+extern int usb_bulk_msg_killable(struct usb_device *usb_dev, unsigned int pipe,
+	void *data, int len, int *actual_length, int timeout);
 
 /* wrappers around usb_control_msg() for the most common standard requests */
 int usb_control_msg_send(struct usb_device *dev, __u8 endpoint, __u8 request,

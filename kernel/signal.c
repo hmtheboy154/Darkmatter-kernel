@@ -60,6 +60,8 @@
 #undef CREATE_TRACE_POINTS
 #include <trace/hooks/signal.h>
 #include <trace/hooks/dtask.h>
+
+EXPORT_TRACEPOINT_SYMBOL_GPL(signal_generate);
 /*
  * SLAB caches for signal bits.
  */
@@ -430,7 +432,8 @@ __sigqueue_alloc(int sig, struct task_struct *t, gfp_t gfp_flags,
 	 */
 	rcu_read_lock();
 	ucounts = task_ucounts(t);
-	sigpending = inc_rlimit_get_ucounts(ucounts, UCOUNT_RLIMIT_SIGPENDING);
+	sigpending = inc_rlimit_get_ucounts(ucounts, UCOUNT_RLIMIT_SIGPENDING,
+					    override_rlimit);
 	rcu_read_unlock();
 	if (!sigpending)
 		return NULL;
@@ -4709,6 +4712,7 @@ __weak const char *arch_vma_name(struct vm_area_struct *vma)
 {
 	return NULL;
 }
+EXPORT_SYMBOL_GPL(arch_vma_name);
 
 static inline void siginfo_buildtime_checks(void)
 {

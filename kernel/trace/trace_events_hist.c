@@ -3210,14 +3210,16 @@ static struct field_var *create_field_var(struct hist_trigger_data *hist_data,
 	var = create_var(hist_data, file, field_name, val->size, val->type);
 	if (IS_ERR(var)) {
 		hist_err(tr, HIST_ERR_VAR_CREATE_FIND_FAIL, errpos(field_name));
-		kfree(val);
+		destroy_hist_field(val, 0);
 		ret = PTR_ERR(var);
 		goto err;
 	}
 
 	field_var = kzalloc(sizeof(struct field_var), GFP_KERNEL);
 	if (!field_var) {
-		kfree(val);
+		destroy_hist_field(val, 0);
+		kfree_const(var->type);
+		kfree(var->var.name);
 		kfree(var);
 		ret =  -ENOMEM;
 		goto err;
@@ -6520,7 +6522,7 @@ static int event_hist_trigger_parse(struct event_command *cmd_ops,
 		return PTR_ERR(hist_data);
 	}
 
-	trigger_data = event_trigger_alloc(cmd_ops, cmd, param, hist_data);
+	trigger_data = trigger_data_alloc(cmd_ops, cmd, param, hist_data);
 	if (!trigger_data) {
 		ret = -ENOMEM;
 		goto out_free;
@@ -6551,27 +6553,27 @@ static int event_hist_trigger_parse(struct event_command *cmd_ops,
 	if (existing_hist_update_only(glob, trigger_data, file))
 		goto out_free;
 
+	if (!get_named_trigger_data(trigger_data)) {
+
+		ret = create_actions(hist_data);
+		if (ret)
+			goto out_free;
+
+		if (has_hist_vars(hist_data) || hist_data->n_var_refs) {
+			ret = save_hist_vars(hist_data);
+			if (ret)
+				goto out_free;
+		}
+
+		ret = tracing_map_init(hist_data->map);
+		if (ret)
+			goto out_free;
+	}
+
 	ret = event_trigger_register(cmd_ops, file, glob, trigger_data);
 	if (ret < 0)
 		goto out_free;
 
-	if (get_named_trigger_data(trigger_data))
-		goto enable;
-
-	ret = create_actions(hist_data);
-	if (ret)
-		goto out_unreg;
-
-	if (has_hist_vars(hist_data) || hist_data->n_var_refs) {
-		ret = save_hist_vars(hist_data);
-		if (ret)
-			goto out_unreg;
-	}
-
-	ret = tracing_map_init(hist_data->map);
-	if (ret)
-		goto out_unreg;
-enable:
 	ret = hist_trigger_enable(trigger_data, file);
 	if (ret)
 		goto out_unreg;
@@ -6592,7 +6594,7 @@ enable:
 
 	remove_hist_vars(hist_data);
 
-	kfree(trigger_data);
+	trigger_data_free(trigger_data);
 
 	destroy_hist_data(hist_data);
 	goto out;

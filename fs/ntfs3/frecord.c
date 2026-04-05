@@ -102,7 +102,9 @@ void ni_clear(struct ntfs_inode *ni)
 {
 	struct rb_node *node;
 
-	if (!ni->vfs_inode.i_nlink && ni->mi.mrec && is_rec_inuse(ni->mi.mrec))
+	if (!ni->vfs_inode.i_nlink && ni->mi.mrec &&
+	    is_rec_inuse(ni->mi.mrec) &&
+	    !(ni->mi.sbi->flags & NTFS_FLAGS_LOG_REPLAYING))
 		ni_delete_all(ni);
 
 	al_destroy(ni);
@@ -375,8 +377,10 @@ bool ni_add_subrecord(struct ntfs_inode *ni, CLST rno, struct mft_inode **mi)
 
 	mi_get_ref(&ni->mi, &m->mrec->parent_ref);
 
-	ni_add_mi(ni, m);
-	*mi = m;
+	*mi = ni_ins_mi(ni, &ni->mi_tree, m->rno, &m->node);
+	if (*mi != m)
+		mi_put(m);
+
 	return true;
 }
 
@@ -1065,9 +1069,9 @@ insert_ext:
 
 out2:
 	ni_remove_mi(ni, mi);
-	mi_put(mi);
 
 out1:
+	mi_put(mi);
 	ntfs_mark_rec_free(sbi, rno, is_mft);
 
 out:
@@ -1901,13 +1905,13 @@ enum REPARSE_SIGN ni_parse_reparse(struct ntfs_inode *ni, struct ATTRIB *attr,
 
 /*
  * fiemap_fill_next_extent_k - a copy of fiemap_fill_next_extent
- * but it accepts kernel address for fi_extents_start
+ * but it uses 'fe_k' instead of fieinfo->fi_extents_start
  */
 static int fiemap_fill_next_extent_k(struct fiemap_extent_info *fieinfo,
-				     u64 logical, u64 phys, u64 len, u32 flags)
+				     struct fiemap_extent *fe_k, u64 logical,
+				     u64 phys, u64 len, u32 flags)
 {
 	struct fiemap_extent extent;
-	struct fiemap_extent __user *dest = fieinfo->fi_extents_start;
 
 	/* only count the extents */
 	if (fieinfo->fi_extents_max == 0) {
@@ -1931,8 +1935,7 @@ static int fiemap_fill_next_extent_k(struct fiemap_extent_info *fieinfo,
 	extent.fe_length = len;
 	extent.fe_flags = flags;
 
-	dest += fieinfo->fi_extents_mapped;
-	memcpy(dest, &extent, sizeof(extent));
+	memcpy(fe_k + fieinfo->fi_extents_mapped, &extent, sizeof(extent));
 
 	fieinfo->fi_extents_mapped++;
 	if (fieinfo->fi_extents_mapped == fieinfo->fi_extents_max)
@@ -1950,7 +1953,6 @@ int ni_fiemap(struct ntfs_inode *ni, struct fiemap_extent_info *fieinfo,
 	      __u64 vbo, __u64 len)
 {
 	int err = 0;
-	struct fiemap_extent __user *fe_u = fieinfo->fi_extents_start;
 	struct fiemap_extent *fe_k = NULL;
 	struct ntfs_sb_info *sbi = ni->mi.sbi;
 	u8 cluster_bits = sbi->cluster_bits;
@@ -2009,7 +2011,6 @@ int ni_fiemap(struct ntfs_inode *ni, struct fiemap_extent_info *fieinfo,
 		err = -ENOMEM;
 		goto out;
 	}
-	fieinfo->fi_extents_start = fe_k;
 
 	end = vbo + len;
 	alloc_size = le64_to_cpu(attr->nres.alloc_size);
@@ -2099,8 +2100,8 @@ int ni_fiemap(struct ntfs_inode *ni, struct fiemap_extent_info *fieinfo,
 			if (vbo + dlen >= end)
 				flags |= FIEMAP_EXTENT_LAST;
 
-			err = fiemap_fill_next_extent_k(fieinfo, vbo, lbo, dlen,
-							flags);
+			err = fiemap_fill_next_extent_k(fieinfo, fe_k, vbo, lbo,
+							dlen, flags);
 
 			if (err < 0)
 				break;
@@ -2121,7 +2122,7 @@ int ni_fiemap(struct ntfs_inode *ni, struct fiemap_extent_info *fieinfo,
 		if (vbo + bytes >= end)
 			flags |= FIEMAP_EXTENT_LAST;
 
-		err = fiemap_fill_next_extent_k(fieinfo, vbo, lbo, bytes,
+		err = fiemap_fill_next_extent_k(fieinfo, fe_k, vbo, lbo, bytes,
 						flags);
 		if (err < 0)
 			break;
@@ -2138,17 +2139,38 @@ int ni_fiemap(struct ntfs_inode *ni, struct fiemap_extent_info *fieinfo,
 	/*
 	 * Copy to user memory out of lock
 	 */
-	if (copy_to_user(fe_u, fe_k,
+	if (copy_to_user(fieinfo->fi_extents_start, fe_k,
 			 fieinfo->fi_extents_max *
 				 sizeof(struct fiemap_extent))) {
 		err = -EFAULT;
 	}
 
 out:
-	/* Restore original pointer. */
-	fieinfo->fi_extents_start = fe_u;
 	kfree(fe_k);
 	return err;
+}
+
+static struct page *ntfs_lock_new_page(struct address_space *mapping,
+		pgoff_t index, gfp_t gfp)
+{
+	struct folio *folio = __filemap_get_folio(mapping, index,
+			FGP_LOCK | FGP_ACCESSED | FGP_CREAT, gfp);
+	struct page *page;
+
+	if (IS_ERR(folio))
+		return ERR_CAST(folio);
+
+	if (!folio_test_uptodate(folio))
+		return folio_file_page(folio, index);
+
+	/* Use a temporary page to avoid data corruption */
+	folio_unlock(folio);
+	folio_put(folio);
+	page = alloc_page(gfp);
+	if (!page)
+		return ERR_PTR(-ENOMEM);
+	__SetPageLocked(page);
+	return page;
 }
 
 /*
@@ -2204,9 +2226,9 @@ int ni_readpage_cmpr(struct ntfs_inode *ni, struct page *page)
 		if (i == idx)
 			continue;
 
-		pg = find_or_create_page(mapping, index, gfp_mask);
-		if (!pg) {
-			err = -ENOMEM;
+		pg = ntfs_lock_new_page(mapping, index, gfp_mask);
+		if (IS_ERR(pg)) {
+			err = PTR_ERR(pg);
 			goto out1;
 		}
 		pages[i] = pg;
@@ -2300,7 +2322,7 @@ int ni_decompress_file(struct ntfs_inode *ni)
 
 		for (vcn = vbo >> sbi->cluster_bits; vcn < end; vcn += clen) {
 			err = attr_data_get_block(ni, vcn, cend - vcn, &lcn,
-						  &clen, &new);
+						  &clen, &new, false);
 			if (err)
 				goto out;
 		}
@@ -2308,13 +2330,13 @@ int ni_decompress_file(struct ntfs_inode *ni)
 		for (i = 0; i < pages_per_frame; i++, index++) {
 			struct page *pg;
 
-			pg = find_or_create_page(mapping, index, gfp_mask);
-			if (!pg) {
+			pg = ntfs_lock_new_page(mapping, index, gfp_mask);
+			if (IS_ERR(pg)) {
 				while (i--) {
 					unlock_page(pages[i]);
 					put_page(pages[i]);
 				}
-				err = -ENOMEM;
+				err = PTR_ERR(pg);
 				goto out;
 			}
 			pages[i] = pg;

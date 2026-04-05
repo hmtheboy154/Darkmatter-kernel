@@ -367,6 +367,15 @@ int test__join_cgroup(const char *path);
 	___ok;								\
 })
 
+#define ASSERT_OK_FD(fd, name) ({					\
+	static int duration = 0;					\
+	int ___fd = (fd);						\
+	bool ___ok = ___fd >= 0;					\
+	CHECK(!___ok, (name), "unexpected fd: %d (errno %d)\n",		\
+	      ___fd, errno);						\
+	___ok;								\
+})
+
 static inline __u64 ptr_to_u64(const void *ptr)
 {
 	return (__u64) (unsigned long) ptr;
@@ -380,8 +389,6 @@ static inline void *u64_to_ptr(__u64 ptr)
 int bpf_find_map(const char *test, struct bpf_object *obj, const char *name);
 int compare_map_keys(int map1_fd, int map2_fd);
 int compare_stack_ips(int smap_fd, int amap_fd, int stack_trace_len);
-int extract_build_id(char *build_id, size_t size);
-int kern_sync_rcu(void);
 int trigger_module_test_read(int read_sz);
 int trigger_module_test_write(int write_sz);
 int write_sysctl(const char *sysctl, const char *value);

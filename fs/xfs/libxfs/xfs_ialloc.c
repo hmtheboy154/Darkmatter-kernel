@@ -772,14 +772,15 @@ sparse_alloc:
 		 * invalid inode records, such as records that start at agbno 0
 		 * or extend beyond the AG.
 		 *
-		 * Set min agbno to the first aligned, non-zero agbno and max to
-		 * the last aligned agbno that is at least one full chunk from
-		 * the end of the AG.
+		 * Set min agbno to the first chunk aligned, non-zero agbno and
+		 * max to one less than the last chunk aligned agbno from the
+		 * end of the AG. We subtract 1 from max so that the cluster
+		 * allocation alignment takes over and allows allocation within
+		 * the last full inode chunk in the AG.
 		 */
 		args.min_agbno = args.mp->m_sb.sb_inoalignmt;
 		args.max_agbno = round_down(args.mp->m_sb.sb_agblocks,
-					    args.mp->m_sb.sb_inoalignmt) -
-				 igeo->ialloc_blks;
+					    args.mp->m_sb.sb_inoalignmt) - 1;
 
 		error = xfs_alloc_vextent(&args);
 		if (error)
@@ -1827,7 +1828,7 @@ xfs_dialloc(
  * might be sparse and only free the regions that are allocated as part of the
  * chunk.
  */
-STATIC void
+static int
 xfs_difree_inode_chunk(
 	struct xfs_trans		*tp,
 	xfs_agnumber_t			agno,
@@ -1844,10 +1845,10 @@ xfs_difree_inode_chunk(
 
 	if (!xfs_inobt_issparse(rec->ir_holemask)) {
 		/* not sparse, calculate extent info directly */
-		xfs_free_extent_later(tp, XFS_AGB_TO_FSB(mp, agno, sagbno),
-				  M_IGEO(mp)->ialloc_blks,
-				  &XFS_RMAP_OINFO_INODES);
-		return;
+		return xfs_free_extent_later(tp,
+				XFS_AGB_TO_FSB(mp, agno, sagbno),
+				M_IGEO(mp)->ialloc_blks, &XFS_RMAP_OINFO_INODES,
+				XFS_AG_RESV_NONE);
 	}
 
 	/* holemask is only 16-bits (fits in an unsigned long) */
@@ -1864,6 +1865,8 @@ xfs_difree_inode_chunk(
 						XFS_INOBT_HOLEMASK_BITS);
 	nextbit = startidx + 1;
 	while (startidx < XFS_INOBT_HOLEMASK_BITS) {
+		int error;
+
 		nextbit = find_next_zero_bit(holemask, XFS_INOBT_HOLEMASK_BITS,
 					     nextbit);
 		/*
@@ -1889,8 +1892,11 @@ xfs_difree_inode_chunk(
 
 		ASSERT(agbno % mp->m_sb.sb_spino_align == 0);
 		ASSERT(contigblk % mp->m_sb.sb_spino_align == 0);
-		xfs_free_extent_later(tp, XFS_AGB_TO_FSB(mp, agno, agbno),
-				  contigblk, &XFS_RMAP_OINFO_INODES);
+		error = xfs_free_extent_later(tp,
+				XFS_AGB_TO_FSB(mp, agno, agbno), contigblk,
+				&XFS_RMAP_OINFO_INODES, XFS_AG_RESV_NONE);
+		if (error)
+			return error;
 
 		/* reset range to current bit and carry on... */
 		startidx = endidx = nextbit;
@@ -1898,6 +1904,7 @@ xfs_difree_inode_chunk(
 next:
 		nextbit++;
 	}
+	return 0;
 }
 
 STATIC int
@@ -1998,7 +2005,9 @@ xfs_difree_inobt(
 			goto error0;
 		}
 
-		xfs_difree_inode_chunk(tp, pag->pag_agno, &rec);
+		error = xfs_difree_inode_chunk(tp, pag->pag_agno, &rec);
+		if (error)
+			goto error0;
 	} else {
 		xic->deleted = false;
 

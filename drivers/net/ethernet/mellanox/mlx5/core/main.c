@@ -103,15 +103,19 @@ enum {
 static struct mlx5_profile profile[] = {
 	[0] = {
 		.mask           = 0,
+		.num_cmd_caches = MLX5_NUM_COMMAND_CACHES,
 	},
 	[1] = {
 		.mask		= MLX5_PROF_MASK_QP_SIZE,
 		.log_max_qp	= 12,
+		.num_cmd_caches = MLX5_NUM_COMMAND_CACHES,
+
 	},
 	[2] = {
 		.mask		= MLX5_PROF_MASK_QP_SIZE |
 				  MLX5_PROF_MASK_MR_CACHE,
 		.log_max_qp	= LOG_MAX_SUPPORTED_QPS,
+		.num_cmd_caches = MLX5_NUM_COMMAND_CACHES,
 		.mr_cache[0]	= {
 			.size	= 500,
 			.limit	= 250
@@ -176,6 +180,11 @@ static struct mlx5_profile profile[] = {
 			.size	= 8,
 			.limit	= 4
 		},
+	},
+	[3] = {
+		.mask		= MLX5_PROF_MASK_QP_SIZE,
+		.log_max_qp	= LOG_MAX_SUPPORTED_QPS,
+		.num_cmd_caches = 0,
 	},
 };
 
@@ -1022,9 +1031,6 @@ static int mlx5_init_once(struct mlx5_core_dev *dev)
 	}
 
 	dev->dm = mlx5_dm_create(dev);
-	if (IS_ERR(dev->dm))
-		mlx5_core_warn(dev, "Failed to init device memory %ld\n", PTR_ERR(dev->dm));
-
 	dev->tracer = mlx5_fw_tracer_create(dev);
 	dev->hv_vhca = mlx5_hv_vhca_create(dev);
 	dev->rsc_dump = mlx5_rsc_dump_create(dev);
@@ -1114,7 +1120,7 @@ static int mlx5_function_enable(struct mlx5_core_dev *dev, bool boot, u64 timeou
 		return err;
 	}
 
-	err = mlx5_cmd_init(dev);
+	err = mlx5_cmd_enable(dev);
 	if (err) {
 		mlx5_core_err(dev, "Failed initializing command interface, aborting\n");
 		return err;
@@ -1168,7 +1174,7 @@ stop_health_poll:
 	mlx5_stop_health_poll(dev, boot);
 err_cmd_cleanup:
 	mlx5_cmd_set_state(dev, MLX5_CMDIF_STATE_DOWN);
-	mlx5_cmd_cleanup(dev);
+	mlx5_cmd_disable(dev);
 
 	return err;
 }
@@ -1179,7 +1185,7 @@ static void mlx5_function_disable(struct mlx5_core_dev *dev, bool boot)
 	mlx5_core_disable_hca(dev, 0);
 	mlx5_stop_health_poll(dev, boot);
 	mlx5_cmd_set_state(dev, MLX5_CMDIF_STATE_DOWN);
-	mlx5_cmd_cleanup(dev);
+	mlx5_cmd_disable(dev);
 }
 
 static int mlx5_function_open(struct mlx5_core_dev *dev)
@@ -1644,6 +1650,12 @@ int mlx5_mdev_init(struct mlx5_core_dev *dev, int profile_idx)
 						mlx5_debugfs_root);
 	INIT_LIST_HEAD(&priv->traps);
 
+	err = mlx5_cmd_init(dev);
+	if (err) {
+		mlx5_core_err(dev, "Failed initializing cmdif SW structs, aborting\n");
+		goto err_cmd_init;
+	}
+
 	err = mlx5_tout_init(dev);
 	if (err) {
 		mlx5_core_err(dev, "Failed initializing timeouts, aborting\n");
@@ -1689,6 +1701,8 @@ err_pagealloc_init:
 err_health_init:
 	mlx5_tout_cleanup(dev);
 err_timeout_init:
+	mlx5_cmd_cleanup(dev);
+err_cmd_init:
 	debugfs_remove(dev->priv.dbg.dbg_root);
 	mutex_destroy(&priv->pgdir_mutex);
 	mutex_destroy(&priv->alloc_mutex);
@@ -1711,6 +1725,7 @@ void mlx5_mdev_uninit(struct mlx5_core_dev *dev)
 	mlx5_pagealloc_cleanup(dev);
 	mlx5_health_cleanup(dev);
 	mlx5_tout_cleanup(dev);
+	mlx5_cmd_cleanup(dev);
 	debugfs_remove_recursive(dev->priv.dbg.dbg_root);
 	mutex_destroy(&priv->pgdir_mutex);
 	mutex_destroy(&priv->alloc_mutex);
@@ -1950,7 +1965,6 @@ static int mlx5_try_fast_unload(struct mlx5_core_dev *dev)
 	/* Panic tear down fw command will stop the PCI bus communication
 	 * with the HCA, so the health poll is no longer needed.
 	 */
-	mlx5_drain_health_wq(dev);
 	mlx5_stop_health_poll(dev, false);
 
 	ret = mlx5_cmd_fast_teardown_hca(dev);
@@ -1985,6 +1999,8 @@ static void shutdown(struct pci_dev *pdev)
 
 	mlx5_core_info(dev, "Shutdown was called\n");
 	set_bit(MLX5_BREAK_FW_WAIT, &dev->intf_state);
+	mlx5_drain_fw_reset(dev);
+	mlx5_drain_health_wq(dev);
 	err = mlx5_try_fast_unload(dev);
 	if (err)
 		mlx5_unload_one(dev, false);
@@ -2026,6 +2042,7 @@ static const struct pci_device_id mlx5_core_pci_table[] = {
 	{ PCI_VDEVICE(MELLANOX, 0x1021) },			/* ConnectX-7 */
 	{ PCI_VDEVICE(MELLANOX, 0x1023) },			/* ConnectX-8 */
 	{ PCI_VDEVICE(MELLANOX, 0x1025) },			/* ConnectX-9 */
+	{ PCI_VDEVICE(MELLANOX, 0x1027) },			/* ConnectX-10 */
 	{ PCI_VDEVICE(MELLANOX, 0xa2d2) },			/* BlueField integrated ConnectX-5 network controller */
 	{ PCI_VDEVICE(MELLANOX, 0xa2d3), MLX5_PCI_DEV_IS_VF},	/* BlueField integrated ConnectX-5 network controller VF */
 	{ PCI_VDEVICE(MELLANOX, 0xa2d6) },			/* BlueField-2 integrated ConnectX-6 Dx network controller */

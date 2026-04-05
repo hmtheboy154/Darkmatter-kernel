@@ -425,6 +425,13 @@ static int gic_irq_set_irqchip_state(struct irq_data *d,
 	}
 
 	gic_poke_irq(d, reg);
+
+	/*
+	 * Force read-back to guarantee that the active state has taken
+	 * effect, and won't race with a guest-driven deactivation.
+	 */
+	if (reg == GICD_ISACTIVER)
+		gic_peek_irq(d, reg);
 	return 0;
 }
 
@@ -914,15 +921,11 @@ void gic_v3_dist_init(void)
 	 * enabled.
 	 */
 	affinity = gic_cpu_to_affinity(smp_processor_id());
-	for (i = 32; i < GIC_LINE_NR; i++) {
-		trace_android_vh_gic_v3_affinity_init(i, GICD_IROUTER, &affinity);
+	for (i = 32; i < GIC_LINE_NR; i++)
 		gic_write_irouter(affinity, base + GICD_IROUTER + i * 8);
-	}
 
-	for (i = 0; i < GIC_ESPI_NR; i++) {
-		trace_android_vh_gic_v3_affinity_init(i, GICD_IROUTERnE, &affinity);
+	for (i = 0; i < GIC_ESPI_NR; i++)
 		gic_write_irouter(affinity, base + GICD_IROUTERnE + i * 8);
-	}
 }
 EXPORT_SYMBOL_GPL(gic_v3_dist_init);
 
@@ -1421,7 +1424,7 @@ static int gic_retrigger(struct irq_data *data)
 static int gic_cpu_pm_notifier(struct notifier_block *self,
 			       unsigned long cmd, void *v)
 {
-	if (cmd == CPU_PM_EXIT) {
+	if (cmd == CPU_PM_EXIT || cmd == CPU_PM_ENTER_FAILED) {
 		if (gic_dist_security_disabled())
 			gic_enable_redist(true);
 		gic_cpu_sys_reg_init();

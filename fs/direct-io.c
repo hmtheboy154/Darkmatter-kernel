@@ -38,6 +38,9 @@
 #include <linux/uio.h>
 #include <linux/atomic.h>
 #include <linux/prefetch.h>
+#ifndef __GENKSYMS__
+#include <trace/hooks/mm.h>
+#endif
 
 #include "internal.h"
 
@@ -286,14 +289,8 @@ static ssize_t dio_complete(struct dio *dio, ssize_t ret, unsigned int flags)
 	 * zeros from unwritten extents.
 	 */
 	if (flags & DIO_COMPLETE_INVALIDATE &&
-	    ret > 0 && dio_op == REQ_OP_WRITE &&
-	    dio->inode->i_mapping->nrpages) {
-		err = invalidate_inode_pages2_range(dio->inode->i_mapping,
-					offset >> PAGE_SHIFT,
-					(offset + ret - 1) >> PAGE_SHIFT);
-		if (err)
-			dio_warn_stale_pagecache(dio->iocb->ki_filp);
-	}
+	    ret > 0 && dio_op == REQ_OP_WRITE)
+		kiocb_invalidate_post_direct_write(dio->iocb, ret);
 
 	inode_dio_end(dio->inode);
 
@@ -1053,6 +1050,12 @@ do_holes:
 				put_page(page);
 				goto out;
 			}
+
+			trace_android_vh_io_statistics(dio->inode->i_mapping,
+					sdio->block_in_file >> sdio->blkfactor,
+					this_chunk_blocks >> sdio->blkfactor,
+					iov_iter_rw(sdio->iter) == READ, true);
+
 			sdio->next_block_for_io += this_chunk_blocks;
 
 			sdio->block_in_file += this_chunk_blocks;

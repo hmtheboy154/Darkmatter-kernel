@@ -65,6 +65,10 @@
 #include <linux/syscall_user_dispatch.h>
 #include <linux/coredump.h>
 
+#ifndef __GENKSYMS__
+#include <linux/dma-buf.h>
+#endif
+
 #include <linux/uaccess.h>
 #include <asm/mmu_context.h>
 #include <asm/tlb.h>
@@ -142,13 +146,11 @@ SYSCALL_DEFINE1(uselib, const char __user *, library)
 		goto out;
 
 	/*
-	 * may_open() has already checked for this, so it should be
-	 * impossible to trip now. But we need to be extra cautious
-	 * and check again at the very end too.
+	 * Check do_open_execat() for an explanation.
 	 */
 	error = -EACCES;
-	if (WARN_ON_ONCE(!S_ISREG(file_inode(file)->i_mode) ||
-			 path_noexec(&file->f_path)))
+	if (WARN_ON_ONCE(!S_ISREG(file_inode(file)->i_mode)) ||
+	    path_noexec(&file->f_path))
 		goto exit;
 
 	fsnotify_open(file);
@@ -172,7 +174,7 @@ SYSCALL_DEFINE1(uselib, const char __user *, library)
 exit:
 	fput(file);
 out:
-  	return error;
+	return error;
 }
 #endif /* #ifdef CONFIG_USELIB */
 
@@ -753,7 +755,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 		    unsigned long stack_top,
 		    int executable_stack)
 {
-	unsigned long ret;
+	int ret;
 	unsigned long stack_shift;
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma = bprm->vma;
@@ -772,7 +774,8 @@ int setup_arg_pages(struct linux_binprm *bprm,
 	stack_base = calc_max_stack_size(stack_base);
 
 	/* Add space for stack randomization. */
-	stack_base += (STACK_RND_MASK << PAGE_SHIFT);
+	if (current->flags & PF_RANDOMIZE)
+		stack_base += (STACK_RND_MASK << PAGE_SHIFT);
 
 	/* Make sure we didn't let the argument array grow too large. */
 	if (vma->vm_end - vma->vm_start > stack_base)
@@ -927,16 +930,16 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 
 	file = do_filp_open(fd, name, &open_exec_flags);
 	if (IS_ERR(file))
-		goto out;
+		return file;
 
 	/*
-	 * may_open() has already checked for this, so it should be
-	 * impossible to trip now. But we need to be extra cautious
-	 * and check again at the very end too.
+	 * In the past the regular type check was here. It moved to may_open() in
+	 * 633fb6ac3980 ("exec: move S_ISREG() check earlier"). Since then it is
+	 * an invariant that all non-regular files error out before we get here.
 	 */
 	err = -EACCES;
-	if (WARN_ON_ONCE(!S_ISREG(file_inode(file)->i_mode) ||
-			 path_noexec(&file->f_path)))
+	if (WARN_ON_ONCE(!S_ISREG(file_inode(file)->i_mode)) ||
+	    path_noexec(&file->f_path))
 		goto exit;
 
 	err = deny_write_access(file);
@@ -946,7 +949,6 @@ static struct file *do_open_execat(int fd, struct filename *name, int flags)
 	if (name->name[0] != '\0')
 		fsnotify_open(file);
 
-out:
 	return file;
 
 exit:
@@ -1253,6 +1255,7 @@ void __set_task_comm(struct task_struct *tsk, const char *buf, bool exec)
 int begin_new_exec(struct linux_binprm * bprm)
 {
 	struct task_struct *me = current;
+	struct files_struct *old_files;
 	int retval;
 
 	/* Once we are committed compute the creds */
@@ -1277,8 +1280,19 @@ int begin_new_exec(struct linux_binprm * bprm)
 	 */
 	io_uring_task_cancel();
 
+	/*
+	 * unshare_files() may not do anything, but we still need to account dmabufs against the
+	 * new_dmabuf_info even if it doesn't. We need to keep track of the original files_struct
+	 * to handle task_dma_buf_info refcounting.
+	 */
+	old_files = me->files;
+
 	/* Ensure the files table is not shared. */
 	retval = unshare_files();
+	if (retval)
+		goto out;
+
+	retval = dma_buf_begin_new_exec(old_files);
 	if (retval)
 		goto out;
 
@@ -1305,6 +1319,14 @@ int begin_new_exec(struct linux_binprm * bprm)
 		goto out;
 
 	bprm->mm = NULL;
+	/*
+	 * New MM has just been installed. Use the task's new dmabuf_info (from
+	 * dma_buf_begin_new_exec) for the new mm_struct.
+	 */
+	if (IS_ENABLED(CONFIG_DMA_SHARED_BUFFER)) {
+		refcount_inc(&current->dmabuf_info->refcnt);
+		me->mm->abi_extend->dmabuf_info = current->dmabuf_info;
+	}
 
 #ifdef CONFIG_POSIX_TIMERS
 	spin_lock_irq(&me->sighand->siglock);

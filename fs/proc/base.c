@@ -65,6 +65,7 @@
 #include <linux/namei.h>
 #include <linux/mnt_namespace.h>
 #include <linux/mm.h>
+#include <linux/pgsize_migration.h>
 #include <linux/swap.h>
 #include <linux/rcupdate.h>
 #include <linux/kallsyms.h>
@@ -85,6 +86,7 @@
 #include <linux/elf.h>
 #include <linux/pid_namespace.h>
 #include <linux/user_namespace.h>
+#include <linux/fs_parser.h>
 #include <linux/fs_struct.h>
 #include <linux/slab.h>
 #include <linux/sched/autogroup.h>
@@ -97,6 +99,7 @@
 #include <linux/resctrl.h>
 #include <linux/cn_proc.h>
 #include <linux/cpufreq_times.h>
+#include <linux/dma-buf.h>
 #include <trace/events/oom.h>
 #include <trace/hooks/sched.h>
 #include "internal.h"
@@ -116,6 +119,40 @@
 
 static u8 nlink_tid __ro_after_init;
 static u8 nlink_tgid __ro_after_init;
+
+enum proc_mem_force {
+	PROC_MEM_FORCE_ALWAYS,
+	PROC_MEM_FORCE_PTRACE,
+	PROC_MEM_FORCE_NEVER
+};
+
+static enum proc_mem_force proc_mem_force_override __ro_after_init =
+	IS_ENABLED(CONFIG_PROC_MEM_NO_FORCE) ? PROC_MEM_FORCE_NEVER :
+	IS_ENABLED(CONFIG_PROC_MEM_FORCE_PTRACE) ? PROC_MEM_FORCE_PTRACE :
+	PROC_MEM_FORCE_ALWAYS;
+
+static const struct constant_table proc_mem_force_table[] __initconst = {
+	{ "always", PROC_MEM_FORCE_ALWAYS },
+	{ "ptrace", PROC_MEM_FORCE_PTRACE },
+	{ "never", PROC_MEM_FORCE_NEVER },
+	{ }
+};
+
+static int __init early_proc_mem_force_override(char *buf)
+{
+	if (!buf)
+		return -EINVAL;
+
+	/*
+	 * lookup_constant() defaults to proc_mem_force_override to preseve
+	 * the initial Kconfig choice in case an invalid param gets passed.
+	 */
+	proc_mem_force_override = lookup_constant(proc_mem_force_table,
+						  buf, proc_mem_force_override);
+
+	return 0;
+}
+early_param("proc_mem.force_override", early_proc_mem_force_override);
 
 struct pid_entry {
 	const char *name;
@@ -393,7 +430,7 @@ static const struct file_operations proc_pid_cmdline_ops = {
 #ifdef CONFIG_KALLSYMS
 /*
  * Provides a wchan file via kallsyms in a proper one-value-per-file format.
- * Returns the resolved symbol.  If that fails, simply return the address.
+ * Returns the resolved symbol to user space.
  */
 static int proc_pid_wchan(struct seq_file *m, struct pid_namespace *ns,
 			  struct pid *pid, struct task_struct *task)
@@ -847,6 +884,28 @@ static int mem_open(struct inode *inode, struct file *file)
 	return ret;
 }
 
+static bool proc_mem_foll_force(struct file *file, struct mm_struct *mm)
+{
+	struct task_struct *task;
+	bool ptrace_active = false;
+
+	switch (proc_mem_force_override) {
+	case PROC_MEM_FORCE_NEVER:
+		return false;
+	case PROC_MEM_FORCE_PTRACE:
+		task = get_proc_task(file_inode(file));
+		if (task) {
+			ptrace_active =	READ_ONCE(task->ptrace) &&
+					READ_ONCE(task->mm) == mm &&
+					READ_ONCE(task->parent) == current;
+			put_task_struct(task);
+		}
+		return ptrace_active;
+	default:
+		return true;
+	}
+}
+
 static ssize_t mem_rw(struct file *file, char __user *buf,
 			size_t count, loff_t *ppos, int write)
 {
@@ -867,7 +926,9 @@ static ssize_t mem_rw(struct file *file, char __user *buf,
 	if (!mmget_not_zero(mm))
 		goto free;
 
-	flags = FOLL_FORCE | (write ? FOLL_WRITE : 0);
+	flags = write ? FOLL_WRITE : 0;
+	if (proc_mem_foll_force(file, mm))
+		flags |= FOLL_FORCE;
 
 	while (count > 0) {
 		size_t this_len = min_t(size_t, count, PAGE_SIZE);
@@ -2417,7 +2478,7 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
 		}
 
 		p->start = vma->vm_start;
-		p->end = vma->vm_end;
+		p->end = VMA_PAD_START(vma);
 		p->mode = vma->vm_file->f_mode;
 	}
 	mmap_read_unlock(mm);
@@ -2585,10 +2646,11 @@ static ssize_t timerslack_ns_write(struct file *file, const char __user *buf,
 	}
 
 	task_lock(p);
-	if (slack_ns == 0)
-		p->timer_slack_ns = p->default_timer_slack_ns;
-	else
-		p->timer_slack_ns = slack_ns;
+	if (task_is_realtime(p))
+		slack_ns = 0;
+	else if (slack_ns == 0)
+		slack_ns = p->default_timer_slack_ns;
+	p->timer_slack_ns = slack_ns;
 	task_unlock(p);
 
 out:
@@ -3240,6 +3302,121 @@ static int proc_stack_depth(struct seq_file *m, struct pid_namespace *ns,
 }
 #endif /* CONFIG_STACKLEAK_METRICS */
 
+#ifdef CONFIG_DMA_SHARED_BUFFER
+static int proc_dmabuf_rss_show(struct seq_file *m, struct pid_namespace *ns,
+		     struct pid *pid, struct task_struct *task)
+{
+	struct task_dma_buf_info *dmabuf_info = task->dmabuf_info;
+
+	if (dmabuf_info) {
+		unsigned long rss;
+
+		spin_lock(&dmabuf_info->lock);
+		rss = dmabuf_info->rss;
+		spin_unlock(&dmabuf_info->lock);
+		seq_printf(m, "%lu\n", rss);
+	}
+
+	return 0;
+}
+
+static int proc_dmabuf_rss_hwm_show(struct seq_file *m, void *v)
+{
+	struct inode *inode = m->private;
+	struct task_struct *task;
+	int ret = 0;
+
+	task = get_proc_task(inode);
+	if (!task)
+		return -ESRCH;
+
+	if (task->dmabuf_info) {
+		unsigned long rss_hwm;
+
+		spin_lock(&task->dmabuf_info->lock);
+		rss_hwm = task->dmabuf_info->rss_hwm;
+		spin_unlock(&task->dmabuf_info->lock);
+		seq_printf(m, "%lu\n", rss_hwm);
+	}
+
+	put_task_struct(task);
+
+	return ret;
+}
+
+static int proc_dmabuf_rss_hwm_open(struct inode *inode, struct file *filp)
+{
+	return single_open(filp, proc_dmabuf_rss_hwm_show, inode);
+}
+
+static ssize_t
+proc_dmabuf_rss_hwm_write(struct file *file, const char __user *buf,
+			  size_t count, loff_t *offset)
+{
+	struct inode *inode = file_inode(file);
+	struct task_struct *task;
+	unsigned long long val;
+	int ret;
+
+	ret = kstrtoull_from_user(buf, count, 10, &val);
+	if (ret)
+		return ret;
+
+	if (val != 0)
+		return -EINVAL;
+
+	task = get_proc_task(inode);
+	if (!task)
+		return -ESRCH;
+
+	if (!task->dmabuf_info) {
+		ret = -ENOENT;
+	} else {
+		spin_lock(&task->dmabuf_info->lock);
+		task->dmabuf_info->rss_hwm = task->dmabuf_info->rss;
+		spin_unlock(&task->dmabuf_info->lock);
+	}
+
+	put_task_struct(task);
+
+	return ret < 0 ? ret : count;
+}
+
+static const struct file_operations proc_dmabuf_rss_hwm_operations = {
+	.open		= proc_dmabuf_rss_hwm_open,
+	.write		= proc_dmabuf_rss_hwm_write,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static int proc_dmabuf_pss_show(struct seq_file *m, struct pid_namespace *ns,
+		     struct pid *pid, struct task_struct *task)
+{
+	struct task_dma_buf_record *rec;
+
+	if (task->dmabuf_info) {
+		unsigned long pss = 0;
+
+		spin_lock(&task->dmabuf_info->lock);
+		list_for_each_entry(rec, &task->dmabuf_info->dmabufs, node) {
+			s64 refs = atomic64_read(&rec->dmabuf->nr_task_refs);
+
+			if (refs <= 0) {
+				pr_err("dmabuf has refs <= 0 %lld\n", refs);
+				continue;
+			}
+
+			pss += rec->dmabuf->size / (size_t)refs;
+		}
+		spin_unlock(&task->dmabuf_info->lock);
+		seq_printf(m, "%lu\n", pss);
+	}
+
+	return 0;
+}
+#endif
+
 /*
  * Thread groups
  */
@@ -3362,6 +3539,11 @@ static const struct pid_entry tgid_base_stuff[] = {
 #ifdef CONFIG_KSM
 	ONE("ksm_merging_pages",  S_IRUSR, proc_pid_ksm_merging_pages),
 	ONE("ksm_stat",  S_IRUSR, proc_pid_ksm_stat),
+#endif
+#ifdef CONFIG_DMA_SHARED_BUFFER
+	ONE("dmabuf_rss", 0444, proc_dmabuf_rss_show),
+	REG("dmabuf_rss_hwm", 0644, proc_dmabuf_rss_hwm_operations),
+	ONE("dmabuf_pss", 0444, proc_dmabuf_pss_show),
 #endif
 };
 

@@ -121,6 +121,7 @@
 #include <net/compat.h>
 
 #include <trace/events/sock.h>
+#include <trace/hooks/net.h>
 
 /* The inetsw table contains everything that inet_create needs to
  * build a new socket.
@@ -372,31 +373,32 @@ lookup_protocol:
 		inet->inet_sport = htons(inet->inet_num);
 		/* Add to protocol hash chains. */
 		err = sk->sk_prot->hash(sk);
-		if (err) {
-			sk_common_release(sk);
-			goto out;
-		}
+		if (err)
+			goto out_sk_release;
 	}
 
 	if (sk->sk_prot->init) {
 		err = sk->sk_prot->init(sk);
-		if (err) {
-			sk_common_release(sk);
-			goto out;
-		}
+		if (err)
+			goto out_sk_release;
 	}
 
 	if (!kern) {
 		err = BPF_CGROUP_RUN_PROG_INET_SOCK(sk);
-		if (err) {
-			sk_common_release(sk);
-			goto out;
-		}
+		if (err)
+			goto out_sk_release;
 	}
+
+	trace_android_rvh_inet_sock_create(sk);
+
 out:
 	return err;
 out_rcu_unlock:
 	rcu_read_unlock();
+	goto out;
+out_sk_release:
+	sk_common_release(sk);
+	sock->sk = NULL;
 	goto out;
 }
 
@@ -419,6 +421,8 @@ int inet_release(struct socket *sock)
 #ifdef CONFIG_NETFILTER_XT_MATCH_QTAGUID
 		qtaguid_untag(sock, true);
 #endif
+		trace_android_rvh_inet_sock_release(sk);
+
 		/* Applications forget to leave groups before exiting */
 		ip_mc_drop_socket(sk);
 

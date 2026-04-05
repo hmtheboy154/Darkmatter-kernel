@@ -44,6 +44,7 @@
 #include <linux/kthread.h>
 #include <linux/init.h>
 #include <linux/mmu_notifier.h>
+#include <linux/nmi.h>
 #include <linux/cred.h>
 
 #include <asm/tlb.h>
@@ -313,6 +314,7 @@ static int oom_evaluate_task(struct task_struct *task, void *arg)
 {
 	struct oom_control *oc = arg;
 	long points;
+	bool bypass = false;
 
 	if (oom_unkillable_task(task))
 		goto next;
@@ -341,6 +343,10 @@ static int oom_evaluate_task(struct task_struct *task, void *arg)
 		points = LONG_MAX;
 		goto select;
 	}
+
+	trace_android_vh_oom_evaluate_task_bypass(task, oc, &bypass);
+	if (bypass)
+		goto next;
 
 	points = oom_badness(task, oc->totalpages);
 	if (points == LONG_MIN || points < oc->chosen_points)
@@ -433,10 +439,15 @@ void dump_tasks(struct oom_control *oc)
 		mem_cgroup_scan_tasks(oc->memcg, dump_task, oc);
 	else {
 		struct task_struct *p;
+		int i = 0;
 
 		rcu_read_lock();
-		for_each_process(p)
+		for_each_process(p) {
+			/* Avoid potential softlockup warning */
+			if ((++i & 1023) == 0)
+				touch_softlockup_watchdog();
 			dump_task(p, oc);
+		}
 		rcu_read_unlock();
 	}
 }

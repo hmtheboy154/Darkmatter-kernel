@@ -732,13 +732,15 @@ static void update_rq_clock_task(struct rq *rq, s64 delta)
 #endif
 #ifdef CONFIG_PARAVIRT_TIME_ACCOUNTING
 	if (static_key_false((&paravirt_steal_rq_enabled))) {
-		steal = paravirt_steal_clock(cpu_of(rq));
+		u64 prev_steal;
+
+		steal = prev_steal = paravirt_steal_clock(cpu_of(rq));
 		steal -= rq->prev_steal_time_rq;
 
 		if (unlikely(steal > delta))
 			steal = delta;
 
-		rq->prev_steal_time_rq += steal;
+		rq->prev_steal_time_rq = prev_steal;
 		delta -= steal;
 	}
 #endif
@@ -1025,10 +1027,11 @@ void wake_up_q(struct wake_q_head *head)
 		struct task_struct *task;
 
 		task = container_of(node, struct task_struct, wake_q);
-		/* Task can safely be re-inserted now: */
-		node = node->next;
-		task->wake_q.next = NULL;
 		task->wake_q_count = head->count;
+		node = node->next;
+		/* pairs with cmpxchg_relaxed() in __wake_q_add() */
+		WRITE_ONCE(task->wake_q.next, NULL);
+		/* Task can safely be re-inserted now. */
 
 		/*
 		 * wake_up_process() executes a full barrier, which pairs with
@@ -1204,9 +1207,9 @@ static void nohz_csd_func(void *info)
 	WARN_ON(!(flags & NOHZ_KICK_MASK));
 
 	rq->idle_balance = idle_cpu(cpu);
-	if (rq->idle_balance && !need_resched()) {
+	if (rq->idle_balance) {
 		rq->nohz_idle_balance = flags;
-		raise_softirq_irqoff(SCHED_SOFTIRQ);
+		__raise_softirq_irqoff(SCHED_SOFTIRQ);
 	}
 }
 
@@ -3987,6 +3990,11 @@ bool cpus_share_cache(int this_cpu, int that_cpu)
 
 static inline bool ttwu_queue_cond(struct task_struct *p, int cpu)
 {
+#ifdef CONFIG_SMP
+	if (p->sched_class == &stop_sched_class)
+		return false;
+#endif
+
 	/*
 	 * Do not complicate things with the async wake_list while the CPU is
 	 * in hotplug state.
@@ -7090,6 +7098,7 @@ static void __setscheduler_prio(struct task_struct *p, int prio)
 		p->sched_class = &fair_sched_class;
 
 	p->prio = prio;
+	trace_android_rvh_setscheduler_prio(p);
 }
 
 #ifdef CONFIG_RT_MUTEXES
@@ -7591,6 +7600,14 @@ static void __setscheduler_params(struct task_struct *p,
 	else if (fair_policy(policy))
 		p->static_prio = NICE_TO_PRIO(attr->sched_nice);
 
+	/* rt-policy tasks do not have a timerslack */
+	if (task_is_realtime(p)) {
+		p->timer_slack_ns = 0;
+	} else if (p->timer_slack_ns == 0) {
+		/* when switching back to non-rt policy, restore timerslack */
+		p->timer_slack_ns = p->default_timer_slack_ns;
+	}
+
 	/*
 	 * __sched_setscheduler() ensures attr->sched_priority == 0 when
 	 * !rt_policy. Always setting this ensures that things like
@@ -7670,6 +7687,12 @@ static int user_check_sched_setscheduler(struct task_struct *p,
 	/* Normal users shall not reset the sched_reset_on_fork flag: */
 	if (p->sched_reset_on_fork && !reset_on_fork)
 		goto req_priv;
+
+	if (!capable(CAP_SYS_NICE)) {
+		/* Can't change util-clamps */
+		if (attr->sched_flags & SCHED_FLAG_UTIL_CLAMP)
+			return -EPERM;
+	}
 
 	return 0;
 
@@ -8041,9 +8064,14 @@ do_sched_setscheduler(pid_t pid, int policy, struct sched_param __user *param)
 	rcu_read_lock();
 	retval = -ESRCH;
 	p = find_process_by_pid(pid);
-	if (p != NULL)
-		retval = sched_setscheduler(p, policy, &lparam);
+	if (likely(p))
+		get_task_struct(p);
 	rcu_read_unlock();
+
+	if (likely(p)) {
+		retval = sched_setscheduler(p, policy, &lparam);
+		put_task_struct(p);
+	}
 
 	return retval;
 }
@@ -8598,7 +8626,7 @@ SYSCALL_DEFINE0(sched_yield)
 #if !defined(CONFIG_PREEMPTION) || defined(CONFIG_PREEMPT_DYNAMIC)
 int __sched __cond_resched(void)
 {
-	if (should_resched(0)) {
+	if (should_resched(0) && !irqs_disabled()) {
 		preempt_schedule_common();
 		return 1;
 	}
@@ -10519,6 +10547,7 @@ void sched_move_task(struct task_struct *tsk)
 	struct rq_flags rf;
 	struct rq *rq;
 
+	trace_android_vh_sched_move_task(tsk);
 	rq = task_rq_lock(tsk, &rf);
 	update_rq_clock(rq);
 
@@ -10559,6 +10588,7 @@ cpu_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 	struct task_group *tg;
 
 	if (!parent) {
+		trace_android_vh_cpu_cgroup_css_alloc_early(parent);
 		/* This is early initialization for the top cgroup */
 		return &root_task_group.css;
 	}
@@ -10566,6 +10596,8 @@ cpu_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)
 	tg = sched_create_group(parent);
 	if (IS_ERR(tg))
 		return ERR_PTR(-ENOMEM);
+
+	trace_android_vh_cpu_cgroup_css_alloc(tg, parent_css);
 
 	return &tg->css;
 }
@@ -10607,6 +10639,8 @@ static void cpu_cgroup_css_free(struct cgroup_subsys_state *css)
 	 * Relies on the RCU grace period between css_released() and this.
 	 */
 	sched_unregister_group(tg);
+
+	trace_android_vh_cpu_cgroup_css_free(css);
 }
 
 #ifdef CONFIG_RT_GROUP_SCHED
@@ -11501,7 +11535,7 @@ struct cgroup_subsys cpu_cgrp_subsys = {
 	.early_init	= true,
 	.threaded	= true,
 };
-
+EXPORT_SYMBOL_GPL(cpu_cgrp_subsys);
 #endif	/* CONFIG_CGROUP_SCHED */
 
 void dump_cpu_task(int cpu)

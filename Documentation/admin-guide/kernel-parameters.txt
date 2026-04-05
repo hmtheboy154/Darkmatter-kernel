@@ -2074,6 +2074,20 @@
 			different crypto accelerators. This option can be used
 			to achieve best performance for particular HW.
 
+	indirect_target_selection= [X86,Intel] Mitigation control for Indirect
+			Target Selection(ITS) bug in Intel CPUs. Updated
+			microcode is also required for a fix in IBPB.
+
+			on:     Enable mitigation (default).
+			off:    Disable mitigation.
+			force:	Force the ITS bug and deploy default
+				mitigation.
+			vmexit: Only deploy mitigation if CPU is affected by
+				guest/host isolation part of ITS.
+
+			For details see:
+			Documentation/admin-guide/hw-vuln/indirect-target-selection.rst
+
 	init=		[KNL]
 			Format: <full_path>
 			Run specified binary instead of /sbin/init as init
@@ -2629,6 +2643,11 @@
 			This option only applies when booting with
 			kvm-arm.mode=protected.
 
+	kvm-arm.hyp_lm_size_mb=
+			[KVM,ARM,EARLY] Maximum amount of contiguous memory mappable in
+			the pKVM hypervisor linear map, in MB. Any attempt to map more
+			memory than this into pKVM stage-1 at run-time may be fatal.
+
 	kvm-arm.mode=
 			[KVM,ARM] Select one of KVM/arm64's modes of operation.
 
@@ -2911,6 +2930,9 @@
 
 			* [no]setxfer: Indicate if transfer speed mode setting
 			  should be skipped.
+
+			* [no]fua: Disable or enable FUA (Force Unit Access)
+			  support for devices supporting this feature.
 
 			* dump_id: Dump IDENTIFY data.
 
@@ -3337,6 +3359,7 @@
 				expose users to several CPU vulnerabilities.
 				Equivalent to: if nokaslr then kpti=0 [ARM64]
 					       gather_data_sampling=off [X86]
+					       indirect_target_selection=off [X86]
 					       kvm.nx_huge_pages=off [X86]
 					       l1tf=off [X86]
 					       mds=off [X86]
@@ -3356,6 +3379,7 @@
 					       srbds=off [X86,INTEL]
 					       ssbd=force-off [ARM64]
 					       tsx_async_abort=off [X86]
+					       vmscape=off [X86]
 
 				Exceptions:
 					       This does not have any effect on
@@ -4621,6 +4645,16 @@
 	printk.time=	Show timing data prefixed to each printk message line
 			Format: <bool>  (1/Y/y=enable, 0/N/n=disable)
 
+	proc_mem.force_override= [KNL]
+			Format: {always | ptrace | never}
+			Traditionally /proc/pid/mem allows memory permissions to be
+			overridden without restrictions. This option may be set to
+			restrict that. Can be one of:
+			- 'always': traditional behavior always allows mem overrides.
+			- 'ptrace': only allow mem overrides for active ptracers.
+			- 'never':  never allow mem overrides.
+			If not specified, default is the CONFIG_PROC_MEM_* choice.
+
 	processor.max_cstate=	[HW,ACPI]
 			Limit processor to maximum C-state
 			max_cstate=9 overrides any DMI blacklist limit.
@@ -5520,6 +5554,9 @@
 			mount the root filesystem
 
 	rootflags=	[KNL] Set root filesystem mount option string
+
+	initramfs_options= [KNL]
+                        Specify mount options for for the initramfs mount.
 
 	rootfstype=	[KNL] Set root filesystem type
 
@@ -6476,6 +6513,19 @@
 			If not specified, "default" is used. In this case,
 			the RNG's choice is left to each individual trust source.
 
+	tsa=		[X86] Control mitigation for Transient Scheduler
+			Attacks on AMD CPUs. Search the following in your
+			favourite search engine for more details:
+
+			"Technical guidance for mitigating transient scheduler
+			attacks".
+
+			off		- disable the mitigation
+			on		- enable the mitigation (default)
+			user		- mitigate only user/kernel transitions
+			vm		- mitigate only guest/host transitions
+
+
 	tsc=		Disable clocksource stability checks for TSC.
 			Format: <string>
 			[x86] reliable: mark tsc clocksource as reliable, this
@@ -6713,6 +6763,9 @@
 	usb-storage.delay_use=
 			[UMS] The delay in seconds before a new device is
 			scanned for Logical Units (default 1).
+			Optionally the delay in milliseconds if the value has
+			suffix with "ms".
+			Example: delay_use=2567ms
 
 	usb-storage.quirks=
 			[UMS] A list of quirks entries to supplement or
@@ -6875,6 +6928,16 @@
 
 	vmpoff=		[KNL,S390] Perform z/VM CP command after power off.
 			Format: <command>
+
+	vmscape=	[X86] Controls mitigation for VMscape attacks.
+			VMscape attacks can leak information from a userspace
+			hypervisor to a guest via speculative side-channels.
+
+			off		- disable the mitigation
+			ibpb		- use Indirect Branch Prediction Barrier
+					  (IBPB) mitigation (default)
+			force		- force vulnerability detection even on
+					  unaffected processors
 
 	vsyscall=	[X86-64]
 			Controls the behavior of vsyscalls (i.e. calls to

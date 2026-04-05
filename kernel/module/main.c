@@ -703,14 +703,16 @@ SYSCALL_DEFINE2(delete_module, const char __user *, name_user,
 	struct module *mod;
 	char name[MODULE_NAME_LEN];
 	char buf[MODULE_FLAGS_BUF_SIZE];
-	int ret, forced = 0;
+	int ret, len, forced = 0;
 
 	if (!capable(CAP_SYS_MODULE) || modules_disabled)
 		return -EPERM;
 
-	if (strncpy_from_user(name, name_user, MODULE_NAME_LEN-1) < 0)
-		return -EFAULT;
-	name[MODULE_NAME_LEN-1] = '\0';
+	len = strncpy_from_user(name, name_user, MODULE_NAME_LEN);
+	if (len == 0 || len == MODULE_NAME_LEN)
+		return -ENOENT;
+	if (len < 0)
+		return len;
 
 	audit_log_kern_module(name);
 
@@ -2813,12 +2815,14 @@ static int load_module(struct load_info *info, const char __user *uargs,
 
 #ifdef CONFIG_MODULE_SIG
 	mod->sig_ok = info->sig_ok;
+#ifndef CONFIG_MODULE_SIG_PROTECT
 	if (!mod->sig_ok) {
 		pr_notice_once("%s: module verification failed: signature "
 			       "and/or required key missing - tainting "
 			       "kernel\n", mod->name);
 		add_taint_module(mod, TAINT_UNSIGNED_MODULE, LOCKDEP_STILL_OK);
 	}
+#endif
 #else
 	mod->sig_ok = 0;
 #endif
